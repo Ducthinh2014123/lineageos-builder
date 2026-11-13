@@ -69,6 +69,8 @@ jobs:
       - name: Biên dịch ROM (mka ${{ github.event.inputs.build_target }})
         run: |
           cd ~/lineage
+          rm -rf hardware/ril/reference-ril
+          export ALLOW_MISSING_DEPENDENCIES=true
           export USE_CCACHE=1
           export CCACHE_EXEC=/usr/bin/ccache
           ccache -M 20G
