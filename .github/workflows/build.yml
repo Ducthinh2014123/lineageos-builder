@@ -1,4 +1,4 @@
-name: Build LineageOS 18.1 for gta2slte
+name: Build LineageOS 18.1 for gta2slte (Extreme Bare-Metal)
 
 on:
   workflow_dispatch:
@@ -21,42 +21,93 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Giải phóng dung lượng ổ cứng Runner (~165GB trống)
+      - name: Lột sạch toàn bộ phần mềm thừa trên Ubuntu Runner (~60GB giải phóng)
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost /usr/local/share/powershell /usr/local/aws-cli /usr/local/google-cloud-sdk /usr/share/swift
+          sudo systemctl stop docker docker.socket containerd postgresql mysql mongod snapd apport unattended-upgrades || true
+          sudo apt-get purge -y \
+            '^dotnet-.*' '^mono-.*' '^openjdk-.*' '^llvm-.*' '^clang-.*' \
+            '^php.*' '^ruby.*' '^mongodb-.*' '^mysql-.*' '^postgresql-.*' \
+            '^texlive-.*' '^fonts-noto.*' '^libgl1-mesa-.*' '^xserver-xorg.*' \
+            azure-cli google-cloud-cli kubectl helm terraform packer ansible \
+            google-chrome-stable firefox microsoft-edge-stable xvfb \
+            powershell podman buildah skopeo docker-ce docker-ce-cli containerd.io \
+            snapd cloud-init modemmanager bluetooth || true
+          sudo apt-get autoremove -y --purge
           sudo apt-get clean
-          docker system prune -af || true
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /opt/hostedtoolcache \
+            /opt/microsoft \
+            /opt/google \
+            /opt/containerd \
+            /opt/az \
+            /usr/local/share/boost \
+            /usr/local/share/powershell \
+            /usr/local/share/chromium \
+            /usr/local/share/gecko_driver \
+            /usr/local/share/phantomjs* \
+            /usr/local/aws-cli \
+            /usr/local/google-cloud-sdk \
+            /usr/local/bin/aliyun /usr/local/bin/azcopy /usr/local/bin/bicep /usr/local/bin/cmake /usr/local/bin/cpack /usr/local/bin/ctest /usr/local/bin/helm /usr/local/bin/heroku /usr/local/bin/hub /usr/local/bin/hugo /usr/local/bin/kind /usr/local/bin/kubectl /usr/local/bin/kustomize /usr/local/bin/minikube /usr/local/bin/oc /usr/local/bin/oras /usr/local/bin/packer /usr/local/bin/pulumi* /usr/local/bin/sam /usr/local/bin/terraform /usr/local/bin/vcpkg \
+            /usr/share/swift \
+            /usr/share/miniconda \
+            /usr/local/julia* \
+            /usr/local/.ghcup \
+            /usr/share/rust \
+            /usr/local/cargo \
+            /usr/local/rustup \
+            /usr/local/go \
+            /usr/local/lib/node_modules \
+            /usr/share/doc/* \
+            /usr/share/man/* \
+            /usr/share/info/* \
+            /var/lib/snapd \
+            /var/lib/docker \
+            /var/lib/apt/lists/* \
+            /var/cache/* \
+            /var/log/*.gz /var/log/*.[0-9]
+          sudo mkdir -p /mnt/out /mnt/ccache
+          sudo chown -R $USER:$USER /mnt/out /mnt/ccache
           df -h
 
-      - name: Cài đặt công cụ build & Repo
+      - name: Cài đúng bộ công cụ tối thiểu AOSP cần (không cài gói khuyến nghị)
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python-is-python3
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
+            git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev \
+            lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
+            libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool \
+            squashfs-tools xsltproc zip zlib1g-dev python-is-python3 ca-certificates
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
           mkdir -p ~/.bin
           curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/.bin/repo
           chmod a+x ~/.bin/repo
           git config --global user.name "Ducthinh2014123"
           git config --global user.email "Ducthinh2014123@users.noreply.github.com"
 
-      - name: Tạo Swap 8GB
+      - name: Tạo Swap 8GB trên ổ phụ /mnt
         run: |
           sudo swapoff -a || true
           sudo rm -f /swapfile
-          sudo fallocate -l 8G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          sudo fallocate -l 8G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
           free -h
 
-      - name: Khôi phục CCache (nếu có từ lần chạy trước)
-        uses: actions/cache@v4
+      - name: Khôi phục CCache từ lần chạy trước
+        uses: actions/cache/restore@v4
         with:
-          path: ~/.ccache
+          path: /mnt/ccache
           key: ccache-gta2slte-${{ github.run_id }}
           restore-keys: |
             ccache-gta2slte-
 
-      - name: Khởi tạo & Sync mã nguồn LineageOS 18.1 (Shallow)
+      - name: Sync mã nguồn & Cắt bỏ kho thừa (macOS, CTS, .repo)
         run: |
           export PATH="$HOME/.bin:$PATH"
           mkdir -p ~/lineage/.repo/local_manifests
@@ -65,24 +116,40 @@ jobs:
           cat << 'EOF' > .repo/local_manifests/gta2slte.xml
           <?xml version="1.0" encoding="UTF-8"?>
           <manifest>
+            <remove-project name="platform/cts" />
+            <remove-project name="platform/prebuilts/clang/host/darwin-x86" />
+            <remove-project name="platform/prebuilts/gcc/darwin-x86/aarch64/aarch64-linux-android-4.9" />
+            <remove-project name="platform/prebuilts/gcc/darwin-x86/arm/arm-linux-androideabi-4.9" />
+            <remove-project name="platform/prebuilts/gcc/darwin-x86/host/i686-apple-darwin-4.2.1" />
+            <remove-project name="platform/prebuilts/go/darwin-x86" />
+            <remove-project name="platform/prebuilts/python/darwin-x86/2.7.5" />
+
             <project name="Ducthinh2014123/android_device_samsung_gta2slte" path="device/samsung/gta2slte" remote="github" revision="lineage-18.1" />
             <project name="Ducthinh2014123/proprietary_vendor_samsung_gta2slte" path="vendor/samsung/gta2slte" remote="github" revision="lineage-18.1" />
             <project name="Ducthinh2014123/android_kernel_samsung_msm8937" path="kernel/samsung/msm8937" remote="github" revision="lineage-18.1" />
             <project name="LineageOS/android_hardware_samsung" path="hardware/samsung" remote="github" revision="lineage-18.1" />
           </manifest>
           EOF
-          repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune -j$(nproc)
-          rm -rf .repo/projects/* .repo/project-objects/*
+          repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune -j4
+          rm -rf .repo
+          find prebuilts -maxdepth 4 -type d -name "darwin-x86" -exec rm -rf {} + || true
           df -h
 
-      - name: Biên dịch ROM (mka ${{ github.event.inputs.build_target }})
+      - name: Biên dịch ROM sang ổ phụ /mnt/out
         run: |
           cd ~/lineage
           rm -rf hardware/ril/reference-ril
+          ln -sfn /mnt/out out
+          ulimit -n 65535
           export ALLOW_MISSING_DEPENDENCIES=true
+          export WITH_DEXPREOPT_BOOT_IMG_AND_SYSTEM_SERVER_ONLY=true
+          export GOMAXPROCS=2
+          export _JAVA_OPTIONS="-Xmx4g"
           export USE_CCACHE=1
+          export CCACHE_DIR=/mnt/ccache
           export CCACHE_EXEC=/usr/bin/ccache
-          ccache -M 15G
+          ccache -M 6G
+          ccache -z
           source build/envsetup.sh
           lunch lineage_gta2slte-userdebug
           mka ${{ github.event.inputs.build_target }}
@@ -93,7 +160,23 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: LineageOS 18.1 gta2slte (${{ github.event.inputs.build_target }} #${{ github.run_number }})
+          fail_on_unmatched_files: false
           files: |
-            ~/lineage/out/target/product/gta2slte/lineage-18.1-*.zip
-            ~/lineage/out/target/product/gta2slte/boot.img
-            ~/lineage/out/target/product/gta2slte/recovery.img
+            /mnt/out/target/product/gta2slte/lineage-18.1-*.zip
+            /mnt/out/target/product/gta2slte/boot.img
+            /mnt/out/target/product/gta2slte/recovery.img
+
+      - name: Dọn thư mục /mnt/out nếu build lỗi để lấy chỗ nén CCache
+        if: failure()
+        run: |
+          export CCACHE_DIR=/mnt/ccache
+          ccache -s
+          sudo rm -rf /mnt/out/*
+          df -h
+
+      - name: Lưu lại CCache bất chấp build thành công hay thất bại
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: /mnt/ccache
+          key: ccache-gta2slte-${{ github.run_id }}
