@@ -125,7 +125,7 @@ jobs:
           </manifest>
           EOF
           repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune -j4
-          rm -rf .repo cts
+          rm -rf .repo
           find prebuilts -maxdepth 4 -type d -name "darwin-x86" -exec rm -rf {} + || true
           df -h
 
