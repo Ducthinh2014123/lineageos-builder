@@ -29,6 +29,7 @@ jobs:
     steps:
       - name: Kiểm tra phân vùng — Công cụ & CCache ở (/), Build Lineage ở (/mnt)
         run: |
+          rm -rf /mnt/*
           mkdir -p /mnt/lineage /var/tmp/ccache
           df -h / /mnt
           free -h
@@ -80,7 +81,7 @@ jobs:
           rm -rf prebuilts/gcc/linux-x86/mips prebuilts/gcc/linux-x86/x86
           df -h / /mnt
 
-      - name: Biên dịch ROM trên /mnt (Chặn timeout ở 315 phút)
+      - name: Biên dịch ROM trên /mnt (Giám sát ổ đĩa & Chặn timeout 315m)
         run: |
           cd /mnt/lineage
           rm -rf hardware/ril/reference-ril
@@ -96,10 +97,35 @@ jobs:
           export CCACHE_EXEC=/usr/bin/ccache
           ccache -M 15G
           ccache -z
+
+          # Tiến trình ngầm: theo dõi dung lượng /mnt, tự dọn file rác an toàn dưới 12GB và ngắt khẩn cấp dưới 5GB
+          (
+            while true; do
+              sleep 600
+              AVAIL_KB=$(df --output=avail /mnt | tail -n 1)
+              AVAIL_GB=$((AVAIL_KB / 1024 / 1024))
+              echo "[DISK WATCH] Dung lượng trống trên /mnt: ${AVAIL_GB} GB"
+
+              if [ "$AVAIL_KB" -lt 12582912 ] && [ "$AVAIL_KB" -ge 5242880 ]; then
+                echo "[DISK CLEAN] /mnt còn dưới 12GB — dọn các file log tạm và thư mục trống cũ..."
+                find /mnt/lineage/out -type f \( -name "*.log" -o -name "*.tmp" \) -mmin +30 -delete 2>/dev/null || true
+                rm -rf /tmp/* /var/tmp/*.tmp 2>/dev/null || true
+              elif [ "$AVAIL_KB" -lt 5242880 ]; then
+                echo "[CẢNH BÁO] /mnt còn dưới 5GB — chủ động dừng ninja để bảo toàn CCache!"
+                pkill -f ninja || true
+                break
+              fi
+            done
+          ) &
+          WATCHER_PID=$!
+
           set +e
           timeout 315m bash -c "source build/envsetup.sh && lunch lineage_gta2slte-userdebug && mka ${{ github.event.inputs.build_target }}"
           STATUS=$?
           set -e
+
+          kill $WATCHER_PID 2>/dev/null || true
+
           if [ $STATUS -eq 124 ]; then
             echo "Đã chạm mốc 315 phút — chủ động dừng biên dịch để dọn out/ và lưu CCache!"
             exit 1
