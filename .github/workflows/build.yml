@@ -25,15 +25,9 @@ jobs:
       options: --privileged
 
     steps:
-      - name: Chia đôi ổ đĩa — Swap 2GB (/mnt), CCache (/), Lineage (/mnt)
+      - name: Chia đôi ổ đĩa — CCache (/var/tmp), Lineage (/mnt)
         run: |
           mkdir -p /mnt/lineage /var/tmp/ccache
-          swapoff -a || true
-          rm -f /mnt/swapfile
-          fallocate -l 2G /mnt/swapfile
-          chmod 600 /mnt/swapfile
-          mkswap /mnt/swapfile
-          swapon /mnt/swapfile
           df -h / /mnt
           free -h
 
@@ -93,7 +87,7 @@ jobs:
           export WITH_DEXPREOPT_BOOT_IMG_AND_SYSTEM_SERVER_ONLY=true
           export STRIP_EVERYTHING=true
           export GOMAXPROCS=2
-          export _JAVA_OPTIONS="-Xmx4g"
+          export _JAVA_OPTIONS="-Xmx5g"
           export USE_CCACHE=1
           export CCACHE_COMPRESS=1
           export CCACHE_DIR=/var/tmp/ccache
@@ -140,7 +134,7 @@ jobs:
         if: failure()
         run: |
           export CCACHE_DIR=/var/tmp/ccache
-          ccache -s
+          command -v ccache >/dev/null 2>&1 && ccache -s || true
           rm -rf /mnt/lineage/out/*
           df -h / /mnt
 
