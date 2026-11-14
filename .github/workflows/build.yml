@@ -79,28 +79,27 @@ jobs:
           </manifest>
           EOF
 
-          # 2. Chặn tải trước ~27GB gói test & toolchain không dùng tới
-          cat << 'EOF' > .repo/local_manifests/remove.xml
-          <?xml version="1.0" encoding="UTF-8"?>
-          <manifest>
-            <remove-project name="platform/cts" />
-            <remove-project name="platform/test/vts" />
-            <remove-project name="platform/developers/docs" />
-            <remove-project name="platform/developers/samples/android" />
-            <remove-project name="platform/prebuilts/clang/host/darwin-x86" />
-            <remove-project name="platform/prebuilts/gcc/darwin-x86/aarch64/aarch64-linux-android-4.9" />
-            <remove-project name="platform/prebuilts/gcc/darwin-x86/arm/arm-linux-androideabi-4.9" />
-            <remove-project name="platform/prebuilts/gcc/darwin-x86/host/i686-apple-darwin-4.2.1" />
-            <remove-project name="platform/prebuilts/gcc/darwin-x86/mips/mips64el-linux-android-4.9" />
-            <remove-project name="platform/prebuilts/gcc/darwin-x86/x86/x86_64-linux-android-4.9" />
-            <remove-project name="platform/prebuilts/gcc/linux-x86/mips/mips64el-linux-android-4.9" />
-            <remove-project name="platform/prebuilts/gcc/linux-x86/x86/x86_64-linux-android-4.9" />
-            <remove-project name="platform/prebuilts/go/darwin-x86" />
-            <remove-project name="platform/prebuilts/python/darwin-x86/2.7.5" />
-            <remove-project name="platform/prebuilts/qemu-kernel" />
-            <remove-project name="platform/prebuilts/android-emulator" />
-          </manifest>
-          EOF
+          # 2. Tự động trích xuất đúng tên project thừa từ manifest của LineageOS để chặn tải
+          python3 -c '
+          import glob, xml.etree.ElementTree as ET
+          skip_paths = ("cts", "test/vts", "developers/", "prebuilts/clang/host/darwin", "prebuilts/gcc/darwin", "prebuilts/gcc/linux-x86/mips", "prebuilts/gcc/linux-x86/x86", "prebuilts/go/darwin", "prebuilts/python/darwin", "prebuilts/qemu-kernel", "prebuilts/android-emulator")
+          names = set()
+          for f in glob.glob(".repo/manifests/**/*.xml", recursive=True):
+              try:
+                  for p in ET.parse(f).getroot().findall(".//project"):
+                      path = p.get("path", "")
+                      name = p.get("name", "")
+                      if name and (path in ("cts", "test/vts") or path.startswith(skip_paths)):
+                          names.add(name)
+              except Exception:
+                  pass
+          with open(".repo/local_manifests/remove.xml", "w") as out:
+              out.write("<manifest>\n")
+              for n in sorted(names):
+                  out.write(f"  <remove-project name=\"{n}\" />\n")
+              out.write("</manifest>\n")
+          print(f"Đã chặn {len(names)} project thừa.")
+          '
 
           # 3. Sync tối giản 1 lệnh duy nhất rồi xóa ngay .repo
           repo sync -c -q --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune -j8
