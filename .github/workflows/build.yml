@@ -144,10 +144,10 @@ jobs:
           export CCACHE_EXEC=/usr/bin/ccache
           ccache -M 8G
           ccache -z
-          source build/envsetup.sh
-          lunch lineage_gta2slte-userdebug
-          timeout 315m mka ${{ github.event.inputs.build_target }}
+          set +e
+          timeout 315m bash -c "source build/envsetup.sh && lunch lineage_gta2slte-userdebug && mka ${{ github.event.inputs.build_target }}"
           STATUS=$?
+          set -e
           if [ $STATUS -eq 124 ]; then
             echo "Đã chạm mốc 315 phút — chủ động dừng biên dịch để dọn out/ và lưu CCache!"
             exit 1
