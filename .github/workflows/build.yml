@@ -4,12 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       build_target:
-        description: 'Mục tiêu build (bootimage để test nhanh, bacon để build full ROM)'
+        description: 'Mục tiêu build (bacon để build full ROM, systemimage để mồi CCache)'
         required: true
         default: 'bacon'
         type: choice
         options:
           - bacon
+          - systemimage
           - bootimage
 
 permissions:
@@ -129,7 +130,7 @@ jobs:
           find prebuilts -maxdepth 4 -type d -name "darwin-x86" -exec rm -rf {} + || true
           df -h
 
-      - name: Biên dịch ROM tối ưu dung lượng
+      - name: Biên dịch ROM tối ưu dung lượng (Chặn timeout ở 315 phút)
         run: |
           cd ~/lineage
           rm -rf hardware/ril/reference-ril
@@ -141,11 +142,18 @@ jobs:
           export USE_CCACHE=1
           export CCACHE_DIR=/mnt/ccache
           export CCACHE_EXEC=/usr/bin/ccache
-          ccache -M 6G
+          ccache -M 8G
           ccache -z
           source build/envsetup.sh
           lunch lineage_gta2slte-userdebug
-          mka ${{ github.event.inputs.build_target }}
+          timeout 315m mka ${{ github.event.inputs.build_target }}
+          STATUS=$?
+          if [ $STATUS -eq 124 ]; then
+            echo "Đã chạm mốc 315 phút — chủ động dừng biên dịch để dọn out/ và lưu CCache!"
+            exit 1
+          elif [ $STATUS -ne 0 ]; then
+            exit $STATUS
+          fi
 
       - name: Đóng gói & Upload lên GitHub Releases
         if: success()
@@ -159,7 +167,7 @@ jobs:
             ~/lineage/out/target/product/gta2slte/boot.img
             ~/lineage/out/target/product/gta2slte/recovery.img
 
-      - name: Dọn thư mục out nếu build lỗi để lấy chỗ nén CCache
+      - name: Dọn thư mục out nếu build lỗi hoặc dừng timeout để nén CCache
         if: failure()
         run: |
           export CCACHE_DIR=/mnt/ccache
