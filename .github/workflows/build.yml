@@ -27,9 +27,9 @@ jobs:
         - /mnt:/mnt
 
     steps:
-      - name: Kiểm tra phân vùng — Công cụ & CCache ở (/), Build Lineage ở (/mnt)
+      - name: Kiểm tra & Dọn sạch phân vùng (/mnt)
         run: |
-          rm -rf /mnt/*
+          rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
           mkdir -p /mnt/lineage /var/tmp/ccache
           df -h / /mnt
           free -h
@@ -61,9 +61,11 @@ jobs:
           restore-keys: |
             ccache-gta2slte-
 
-      - name: Sync mã nguồn & Dọn rác không dùng tới (Nằm trên /mnt)
+      - name: Sync mã nguồn theo từng cụm để không tràn /mnt
         run: |
+          rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
           mkdir -p /mnt/lineage/.repo/local_manifests
+          df -h / /mnt
           cd /mnt/lineage
           repo init -u https://github.com/LineageOS/android.git -b lineage-18.1 --depth=1 --git-lfs
           cat << 'EOF' > .repo/local_manifests/gta2slte.xml
@@ -75,10 +77,16 @@ jobs:
             <project name="LineageOS/android_hardware_samsung" path="hardware/samsung" remote="github" revision="lineage-18.1" />
           </manifest>
           EOF
-          repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune -j4
-          rm -rf .repo cts developers docs
+
+          # Bước 1: Sync riêng cụm prebuilts (nặng nhất) rồi xóa ngay object git của nó
+          repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune -j4 prebuilts
+          rm -rf .repo/project-objects/platform/prebuilts* .repo/projects/prebuilts*
           find prebuilts -maxdepth 4 -type d -name "darwin-x86" -exec rm -rf {} + || true
           rm -rf prebuilts/gcc/linux-x86/mips prebuilts/gcc/linux-x86/x86 prebuilts/qemu-kernel prebuilts/android-emulator
+
+          # Bước 2: Sync phần còn lại và dọn sạch .repo
+          repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune -j4
+          rm -rf .repo cts developers docs
           df -h / /mnt
 
       - name: Biên dịch ROM trên /mnt (Tự giải phóng file trung gian & Chặn timeout 315m)
@@ -162,7 +170,7 @@ jobs:
         run: |
           export CCACHE_DIR=/var/tmp/ccache
           command -v ccache >/dev/null 2>&1 && ccache -s || true
-          rm -rf /mnt/lineage/out/*
+          rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
           df -h / /mnt
 
       - name: Lưu lại CCache bất chấp build thành công hay thất bại
