@@ -25,15 +25,15 @@ jobs:
       options: --privileged
 
     steps:
-      - name: Chia đôi ổ đĩa — Swap 2GB & CCache sang (/), Lineage sang (/mnt)
+      - name: Chia đôi ổ đĩa — Swap 2GB (/mnt), CCache (/), Lineage (/mnt)
         run: |
           mkdir -p /mnt/lineage /var/tmp/ccache
           swapoff -a || true
-          rm -f /swapfile /mnt/swapfile
-          fallocate -l 2G /var/tmp/swapfile
-          chmod 600 /var/tmp/swapfile
-          mkswap /var/tmp/swapfile
-          swapon /var/tmp/swapfile
+          rm -f /mnt/swapfile
+          fallocate -l 2G /mnt/swapfile
+          chmod 600 /mnt/swapfile
+          mkswap /mnt/swapfile
+          swapon /mnt/swapfile
           df -h / /mnt
           free -h
 
@@ -113,6 +113,7 @@ jobs:
 
       - name: Đóng gói & Upload lên GitHub Releases
         if: success()
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
@@ -122,6 +123,18 @@ jobs:
             /mnt/lineage/out/target/product/gta2slte/lineage-18.1-*.zip
             /mnt/lineage/out/target/product/gta2slte/boot.img
             /mnt/lineage/out/target/product/gta2slte/recovery.img
+
+      - name: Đính kèm file ROM trực tiếp vào Build (Artifacts dự phòng)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LineageOS-18.1-gta2slte-${{ github.run_number }}
+          path: |
+            /mnt/lineage/out/target/product/gta2slte/lineage-18.1-*.zip
+            /mnt/lineage/out/target/product/gta2slte/boot.img
+            /mnt/lineage/out/target/product/gta2slte/recovery.img
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Dọn thư mục out nếu build lỗi hoặc dừng timeout để nén CCache
         if: failure()
