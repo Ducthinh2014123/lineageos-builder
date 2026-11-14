@@ -1,67 +1,4 @@
-name: Build LineageOS 18.1 for gta2slte (Dual-Partition 140GB)
-
-on:
-  workflow_dispatch:
-    inputs:
-      build_target:
-        description: 'Mục tiêu build (bacon để build full ROM, systemimage để mồi CCache)'
-        required: true
-        default: 'bacon'
-        type: choice
-        options:
-          - bacon
-          - systemimage
-          - bootimage
-
-permissions:
-  contents: write
-
-jobs:
-  build:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 360
-    container:
-      image: ubuntu:20.04
-      options: --privileged
-      volumes:
-        - /mnt:/mnt
-
-    steps:
-      - name: Kiểm tra phân vùng — Công cụ & CCache ở (/), Build Lineage ở (/mnt)
-        run: |
-          rm -rf /mnt/*
-          mkdir -p /mnt/lineage /var/tmp/ccache
-          df -h / /mnt
-          free -h
-
-      - name: Cài đặt bộ công cụ build tối giản (Đủ 7z, unzip, wget, curl...)
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            bc bison build-essential ccache curl flex fontconfig g++-multilib gcc-multilib \
-            git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev \
-            lib32z1-dev libfreetype6 liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
-            libssl-dev libxml2 libxml2-utils lzop p7zip-full pngcrush python3 python3-protobuf \
-            python-is-python3 rsync schedtool squashfs-tools tar unzip xsltproc xz-utils zip \
-            zlib1g-dev ca-certificates wget
-          ln -sf /usr/lib/x86_64-linux-gnu/libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5 || true
-          ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
-          rm -rf /var/lib/apt/lists/* /tmp/*
-          mkdir -p /usr/local/bin
-          curl -s https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
-          chmod a+x /usr/local/bin/repo
-          git config --global user.name "Ducthinh2014123"
-          git config --global user.email "Ducthinh2014123@users.noreply.github.com"
-
-      - name: Khôi phục CCache từ lần chạy trước (Nằm trên /)
-        uses: actions/cache/restore@v4
-        with:
-          path: /var/tmp/ccache
-          key: ccache-gta2slte-${{ github.run_id }}
-          restore-keys: |
-            ccache-gta2slte-
-
-      - name: Sync mã nguồn & Dọn rác prebuilts (Nằm trên /mnt)
+      - name: Sync mã nguồn & Dọn rác không dùng tới (Nằm trên /mnt)
         run: |
           mkdir -p /mnt/lineage/.repo/local_manifests
           cd /mnt/lineage
@@ -76,12 +13,12 @@ jobs:
           </manifest>
           EOF
           repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune -j4
-          rm -rf .repo
+          rm -rf .repo cts developers docs
           find prebuilts -maxdepth 4 -type d -name "darwin-x86" -exec rm -rf {} + || true
-          rm -rf prebuilts/gcc/linux-x86/mips prebuilts/gcc/linux-x86/x86
+          rm -rf prebuilts/gcc/linux-x86/mips prebuilts/gcc/linux-x86/x86 prebuilts/qemu-kernel prebuilts/android-emulator
           df -h / /mnt
 
-      - name: Biên dịch ROM trên /mnt (Giám sát ổ đĩa & Chặn timeout 315m)
+      - name: Biên dịch ROM trên /mnt (Tự giải phóng file trung gian & Chặn timeout 315m)
         run: |
           cd /mnt/lineage
           rm -rf hardware/ril/reference-ril
@@ -98,20 +35,19 @@ jobs:
           ccache -M 15G
           ccache -z
 
-          # Tiến trình ngầm: theo dõi dung lượng /mnt, tự dọn file rác an toàn dưới 12GB và ngắt khẩn cấp dưới 5GB
           (
             while true; do
-              sleep 600
+              sleep 480
               AVAIL_KB=$(df --output=avail /mnt | tail -n 1)
               AVAIL_GB=$((AVAIL_KB / 1024 / 1024))
               echo "[DISK WATCH] Dung lượng trống trên /mnt: ${AVAIL_GB} GB"
 
-              if [ "$AVAIL_KB" -lt 12582912 ] && [ "$AVAIL_KB" -ge 5242880 ]; then
-                echo "[DISK CLEAN] /mnt còn dưới 12GB — dọn các file log tạm và thư mục trống cũ..."
-                find /mnt/lineage/out -type f \( -name "*.log" -o -name "*.tmp" \) -mmin +30 -delete 2>/dev/null || true
-                rm -rf /tmp/* /var/tmp/*.tmp 2>/dev/null || true
-              elif [ "$AVAIL_KB" -lt 5242880 ]; then
-                echo "[CẢNH BÁO] /mnt còn dưới 5GB — chủ động dừng ninja để bảo toàn CCache!"
+              if [ "$AVAIL_KB" -lt 15728640 ] && [ "$AVAIL_KB" -ge 4194304 ]; then
+                echo "[DISK CLEAN] /mnt dưới 15GB — dọn file .o trung gian đã lưu trong CCache..."
+                find /mnt/lineage/out/soong/.intermediates -type f -name "*.o" -mmin +20 -delete 2>/dev/null || true
+                find /mnt/lineage/out -type f \( -name "*.log" -o -name "*.tmp" \) -mmin +15 -delete 2>/dev/null || true
+              elif [ "$AVAIL_KB" -lt 4194304 ]; then
+                echo "[CẢNH BÁO] /mnt còn dưới 4GB — chủ động dừng ninja để bảo toàn CCache!"
                 pkill -f ninja || true
                 break
               fi
@@ -132,43 +68,3 @@ jobs:
           elif [ $STATUS -ne 0 ]; then
             exit $STATUS
           fi
-
-      - name: Đóng gói & Upload lên GitHub Releases
-        if: success()
-        continue-on-error: true
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: LineageOS 18.1 gta2slte (${{ github.event.inputs.build_target }} #${{ github.run_number }})
-          fail_on_unmatched_files: false
-          files: |
-            /mnt/lineage/out/target/product/gta2slte/lineage-18.1-*.zip
-            /mnt/lineage/out/target/product/gta2slte/boot.img
-            /mnt/lineage/out/target/product/gta2slte/recovery.img
-
-      - name: Đính kèm file ROM trực tiếp vào Build (Artifacts dự phòng)
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: LineageOS-18.1-gta2slte-${{ github.run_number }}
-          path: |
-            /mnt/lineage/out/target/product/gta2slte/lineage-18.1-*.zip
-            /mnt/lineage/out/target/product/gta2slte/boot.img
-            /mnt/lineage/out/target/product/gta2slte/recovery.img
-          retention-days: 7
-          if-no-files-found: warn
-
-      - name: Dọn thư mục out nếu build lỗi hoặc dừng timeout để nén CCache
-        if: failure()
-        run: |
-          export CCACHE_DIR=/var/tmp/ccache
-          command -v ccache >/dev/null 2>&1 && ccache -s || true
-          rm -rf /mnt/lineage/out/*
-          df -h / /mnt
-
-      - name: Lưu lại CCache bất chấp build thành công hay thất bại
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: /var/tmp/ccache
-          key: ccache-gta2slte-${{ github.run_id }}
