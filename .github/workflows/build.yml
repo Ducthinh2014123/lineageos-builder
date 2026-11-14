@@ -1,4 +1,4 @@
-name: Build LineageOS 18.1 for gta2slte (Extreme Bare-Metal)
+name: Build LineageOS 18.1 for gta2slte (Dual-Partition 140GB)
 
 on:
   workflow_dispatch:
@@ -20,101 +20,54 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
+    container:
+      image: ubuntu:20.04
+      options: --privileged
 
     steps:
-      - name: Lột sạch toàn bộ phần mềm thừa trên Ubuntu Runner (~60GB giải phóng)
+      - name: Chia đôi ổ đĩa — Swap 2GB & CCache sang (/), Lineage sang (/mnt)
         run: |
-          sudo systemctl stop docker docker.socket containerd postgresql mysql mongod snapd apport unattended-upgrades || true
-          sudo apt-get purge -y \
-            '^dotnet-.*' '^mono-.*' '^openjdk-.*' '^llvm-.*' '^clang-.*' \
-            '^php.*' '^ruby.*' '^mongodb-.*' '^mysql-.*' '^postgresql-.*' \
-            '^texlive-.*' '^fonts-noto.*' '^libgl1-mesa-.*' '^xserver-xorg.*' \
-            azure-cli google-cloud-cli kubectl helm terraform packer ansible \
-            google-chrome-stable firefox microsoft-edge-stable xvfb \
-            powershell podman buildah skopeo docker-ce docker-ce-cli containerd.io \
-            snapd cloud-init modemmanager bluetooth || true
-          sudo apt-get autoremove -y --purge
-          sudo apt-get clean
-          sudo rm -rf \
-            /usr/share/dotnet \
-            /usr/local/lib/android \
-            /opt/ghc \
-            /opt/hostedtoolcache \
-            /opt/microsoft \
-            /opt/google \
-            /opt/containerd \
-            /opt/az \
-            /usr/local/share/boost \
-            /usr/local/share/powershell \
-            /usr/local/share/chromium \
-            /usr/local/share/gecko_driver \
-            /usr/local/share/phantomjs* \
-            /usr/local/aws-cli \
-            /usr/local/google-cloud-sdk \
-            /usr/local/bin/aliyun /usr/local/bin/azcopy /usr/local/bin/bicep /usr/local/bin/cmake /usr/local/bin/cpack /usr/local/bin/ctest /usr/local/bin/helm /usr/local/bin/heroku /usr/local/bin/hub /usr/local/bin/hugo /usr/local/bin/kind /usr/local/bin/kubectl /usr/local/bin/kustomize /usr/local/bin/minikube /usr/local/bin/oc /usr/local/bin/oras /usr/local/bin/packer /usr/local/bin/pulumi* /usr/local/bin/sam /usr/local/bin/terraform /usr/local/bin/vcpkg \
-            /usr/share/swift \
-            /usr/share/miniconda \
-            /usr/local/julia* \
-            /usr/local/.ghcup \
-            /usr/share/rust \
-            /usr/local/cargo \
-            /usr/local/rustup \
-            /usr/local/go \
-            /usr/local/lib/node_modules \
-            /usr/share/doc/* \
-            /usr/share/man/* \
-            /usr/share/info/* \
-            /var/lib/snapd \
-            /var/lib/docker \
-            /var/lib/apt/lists/* \
-            /var/cache/* \
-            /var/log/*.gz /var/log/*.[0-9]
-          sudo mkdir -p /mnt/ccache
-          sudo chown -R $USER:$USER /mnt/ccache
-          df -h
+          mkdir -p /mnt/lineage /var/tmp/ccache
+          swapoff -a || true
+          rm -f /swapfile /mnt/swapfile
+          fallocate -l 2G /var/tmp/swapfile
+          chmod 600 /var/tmp/swapfile
+          mkswap /var/tmp/swapfile
+          swapon /var/tmp/swapfile
+          df -h / /mnt
+          free -h
 
-      - name: Cài đặt FULL bộ công cụ build LineageOS & Repo
+      - name: Cài đặt bộ công cụ build tối giản (~650MB)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
             git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev \
             lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
             libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool \
-            squashfs-tools xsltproc zip zlib1g-dev python-is-python3 python3-pip \
-            ca-certificates fontconfig libfreetype6
-          sudo ln -sf /usr/lib/x86_64-linux-gnu/libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5 || true
-          sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
-          sudo apt-get clean
-          mkdir -p ~/.bin
-          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/.bin/repo
-          chmod a+x ~/.bin/repo
+            squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3 \
+            ca-certificates wget
+          ln -sf /usr/lib/x86_64-linux-gnu/libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5 || true
+          ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
+          rm -rf /var/lib/apt/lists/* /tmp/*
+          mkdir -p /usr/local/bin
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
+          chmod a+x /usr/local/bin/repo
           git config --global user.name "Ducthinh2014123"
           git config --global user.email "Ducthinh2014123@users.noreply.github.com"
-
-      - name: Tạo Swap 8GB
-        run: |
-          sudo swapoff -a || true
-          sudo rm -f /swapfile /mnt/swapfile
-          sudo fallocate -l 8G /mnt/swapfile
-          sudo chmod 600 /mnt/swapfile
-          sudo mkswap /mnt/swapfile
-          sudo swapon /mnt/swapfile
-          free -h
 
       - name: Khôi phục CCache từ lần chạy trước
         uses: actions/cache/restore@v4
         with:
-          path: /mnt/ccache
+          path: /var/tmp/ccache
           key: ccache-gta2slte-${{ github.run_id }}
           restore-keys: |
             ccache-gta2slte-
 
-      - name: Sync mã nguồn & Xóa rác sau khi tải (.repo, darwin-x86)
+      - name: Sync mã nguồn & Dọn sạch rác prebuilts (~17GB source)
         run: |
-          export PATH="$HOME/.bin:$PATH"
-          mkdir -p ~/lineage/.repo/local_manifests
-          cd ~/lineage
+          mkdir -p /mnt/lineage/.repo/local_manifests
+          cd /mnt/lineage
           repo init -u https://github.com/LineageOS/android.git -b lineage-18.1 --depth=1 --git-lfs
           cat << 'EOF' > .repo/local_manifests/gta2slte.xml
           <?xml version="1.0" encoding="UTF-8"?>
@@ -128,19 +81,22 @@ jobs:
           repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune -j4
           rm -rf .repo
           find prebuilts -maxdepth 4 -type d -name "darwin-x86" -exec rm -rf {} + || true
-          df -h
+          rm -rf prebuilts/gcc/linux-x86/mips prebuilts/gcc/linux-x86/x86
+          df -h / /mnt
 
       - name: Biên dịch ROM tối ưu dung lượng (Chặn timeout ở 315 phút)
         run: |
-          cd ~/lineage
+          cd /mnt/lineage
           rm -rf hardware/ril/reference-ril
           ulimit -n 65535
           export ALLOW_MISSING_DEPENDENCIES=true
           export WITH_DEXPREOPT_BOOT_IMG_AND_SYSTEM_SERVER_ONLY=true
+          export STRIP_EVERYTHING=true
           export GOMAXPROCS=2
           export _JAVA_OPTIONS="-Xmx4g"
           export USE_CCACHE=1
-          export CCACHE_DIR=/mnt/ccache
+          export CCACHE_COMPRESS=1
+          export CCACHE_DIR=/var/tmp/ccache
           export CCACHE_EXEC=/usr/bin/ccache
           ccache -M 8G
           ccache -z
@@ -163,21 +119,21 @@ jobs:
           name: LineageOS 18.1 gta2slte (${{ github.event.inputs.build_target }} #${{ github.run_number }})
           fail_on_unmatched_files: false
           files: |
-            ~/lineage/out/target/product/gta2slte/lineage-18.1-*.zip
-            ~/lineage/out/target/product/gta2slte/boot.img
-            ~/lineage/out/target/product/gta2slte/recovery.img
+            /mnt/lineage/out/target/product/gta2slte/lineage-18.1-*.zip
+            /mnt/lineage/out/target/product/gta2slte/boot.img
+            /mnt/lineage/out/target/product/gta2slte/recovery.img
 
       - name: Dọn thư mục out nếu build lỗi hoặc dừng timeout để nén CCache
         if: failure()
         run: |
-          export CCACHE_DIR=/mnt/ccache
+          export CCACHE_DIR=/var/tmp/ccache
           ccache -s
-          sudo rm -rf ~/lineage/out/*
-          df -h
+          rm -rf /mnt/lineage/out/*
+          df -h / /mnt
 
       - name: Lưu lại CCache bất chấp build thành công hay thất bại
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: /mnt/ccache
+          path: /var/tmp/ccache
           key: ccache-gta2slte-${{ github.run_id }}
