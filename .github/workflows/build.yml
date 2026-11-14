@@ -23,24 +23,26 @@ jobs:
     container:
       image: ubuntu:20.04
       options: --privileged
+      volumes:
+        - /mnt:/mnt
 
     steps:
-      - name: Chia đôi ổ đĩa — CCache (/var/tmp), Lineage (/mnt)
+      - name: Kiểm tra phân vùng — Công cụ & CCache ở (/), Build Lineage ở (/mnt)
         run: |
           mkdir -p /mnt/lineage /var/tmp/ccache
           df -h / /mnt
           free -h
 
-      - name: Cài đặt bộ công cụ build tối giản (~650MB)
+      - name: Cài đặt bộ công cụ build tối giản (Đủ 7z, unzip, wget, curl...)
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
+            bc bison build-essential ccache curl flex fontconfig g++-multilib gcc-multilib \
             git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev \
-            lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
-            libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool \
-            squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3 \
-            ca-certificates wget
+            lib32z1-dev libfreetype6 liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
+            libssl-dev libxml2 libxml2-utils lzop p7zip-full pngcrush python3 python3-protobuf \
+            python-is-python3 rsync schedtool squashfs-tools tar unzip xsltproc xz-utils zip \
+            zlib1g-dev ca-certificates wget
           ln -sf /usr/lib/x86_64-linux-gnu/libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5 || true
           ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
           rm -rf /var/lib/apt/lists/* /tmp/*
@@ -50,7 +52,7 @@ jobs:
           git config --global user.name "Ducthinh2014123"
           git config --global user.email "Ducthinh2014123@users.noreply.github.com"
 
-      - name: Khôi phục CCache từ lần chạy trước
+      - name: Khôi phục CCache từ lần chạy trước (Nằm trên /)
         uses: actions/cache/restore@v4
         with:
           path: /var/tmp/ccache
@@ -58,7 +60,7 @@ jobs:
           restore-keys: |
             ccache-gta2slte-
 
-      - name: Sync mã nguồn & Dọn sạch rác prebuilts (~17GB source)
+      - name: Sync mã nguồn & Dọn rác prebuilts (Nằm trên /mnt)
         run: |
           mkdir -p /mnt/lineage/.repo/local_manifests
           cd /mnt/lineage
@@ -78,7 +80,7 @@ jobs:
           rm -rf prebuilts/gcc/linux-x86/mips prebuilts/gcc/linux-x86/x86
           df -h / /mnt
 
-      - name: Biên dịch ROM tối ưu dung lượng (Chặn timeout ở 315 phút)
+      - name: Biên dịch ROM trên /mnt (Chặn timeout ở 315 phút)
         run: |
           cd /mnt/lineage
           rm -rf hardware/ril/reference-ril
@@ -92,7 +94,7 @@ jobs:
           export CCACHE_COMPRESS=1
           export CCACHE_DIR=/var/tmp/ccache
           export CCACHE_EXEC=/usr/bin/ccache
-          ccache -M 8G
+          ccache -M 15G
           ccache -z
           set +e
           timeout 315m bash -c "source build/envsetup.sh && lunch lineage_gta2slte-userdebug && mka ${{ github.event.inputs.build_target }}"
