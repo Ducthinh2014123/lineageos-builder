@@ -61,13 +61,14 @@ jobs:
           restore-keys: |
             ccache-gta2slte-
 
-      - name: Sync mã nguồn theo từng cụm để không tràn /mnt
+      - name: Sync mã nguồn tối giản & Dọn sạch .repo (Nằm trên /mnt)
         run: |
           rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
           mkdir -p /mnt/lineage/.repo/local_manifests
-          df -h / /mnt
           cd /mnt/lineage
           repo init -u https://github.com/LineageOS/android.git -b lineage-18.1 --depth=1 --git-lfs
+
+          # 1. Manifest thiết bị gta2slte
           cat << 'EOF' > .repo/local_manifests/gta2slte.xml
           <?xml version="1.0" encoding="UTF-8"?>
           <manifest>
@@ -78,15 +79,32 @@ jobs:
           </manifest>
           EOF
 
-          # Bước 1: Sync riêng cụm prebuilts (nặng nhất) rồi xóa ngay object git của nó
-          repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune -j4 prebuilts
-          rm -rf .repo/project-objects/platform/prebuilts* .repo/projects/prebuilts*
-          find prebuilts -maxdepth 4 -type d -name "darwin-x86" -exec rm -rf {} + || true
-          rm -rf prebuilts/gcc/linux-x86/mips prebuilts/gcc/linux-x86/x86 prebuilts/qemu-kernel prebuilts/android-emulator
+          # 2. Chặn tải trước ~27GB gói test & toolchain không dùng tới
+          cat << 'EOF' > .repo/local_manifests/remove.xml
+          <?xml version="1.0" encoding="UTF-8"?>
+          <manifest>
+            <remove-project name="platform/cts" />
+            <remove-project name="platform/test/vts" />
+            <remove-project name="platform/developers/docs" />
+            <remove-project name="platform/developers/samples/android" />
+            <remove-project name="platform/prebuilts/clang/host/darwin-x86" />
+            <remove-project name="platform/prebuilts/gcc/darwin-x86/aarch64/aarch64-linux-android-4.9" />
+            <remove-project name="platform/prebuilts/gcc/darwin-x86/arm/arm-linux-androideabi-4.9" />
+            <remove-project name="platform/prebuilts/gcc/darwin-x86/host/i686-apple-darwin-4.2.1" />
+            <remove-project name="platform/prebuilts/gcc/darwin-x86/mips/mips64el-linux-android-4.9" />
+            <remove-project name="platform/prebuilts/gcc/darwin-x86/x86/x86_64-linux-android-4.9" />
+            <remove-project name="platform/prebuilts/gcc/linux-x86/mips/mips64el-linux-android-4.9" />
+            <remove-project name="platform/prebuilts/gcc/linux-x86/x86/x86_64-linux-android-4.9" />
+            <remove-project name="platform/prebuilts/go/darwin-x86" />
+            <remove-project name="platform/prebuilts/python/darwin-x86/2.7.5" />
+            <remove-project name="platform/prebuilts/qemu-kernel" />
+            <remove-project name="platform/prebuilts/android-emulator" />
+          </manifest>
+          EOF
 
-          # Bước 2: Sync phần còn lại và dọn sạch .repo
-          repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune -j4
-          rm -rf .repo cts developers docs
+          # 3. Sync tối giản 1 lệnh duy nhất rồi xóa ngay .repo
+          repo sync -c -q --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune -j8
+          rm -rf .repo
           df -h / /mnt
 
       - name: Biên dịch ROM trên /mnt (Tự giải phóng file trung gian & Chặn timeout 315m)
