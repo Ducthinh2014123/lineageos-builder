@@ -69,7 +69,7 @@ jobs:
           cd /mnt/lineage
           repo init -u https://github.com/LineageOS/android.git -b lineage-18.1 --depth=1 --git-lfs
 
-          # 1. Manifest thiết bị gta2slte (gồm cả sony/timekeep để lunch không phải sync lại)
+          # 1. Manifest thiết bị gta2slte
           cat << 'EOF' > .repo/local_manifests/gta2slte.xml
           <?xml version="1.0" encoding="UTF-8"?>
           <manifest>
@@ -81,17 +81,28 @@ jobs:
           </manifest>
           EOF
 
-          # 2. Chặn tải trước ~25GB gói test cts & toolchain không dùng tới (giữ lại test/vts cho ckati)
+          # 2. Chỉ chặn các toolchain & tài liệu nặng ngoài cây quét Android.mk của ckati (~15GB)
           python3 -c '
           import glob, xml.etree.ElementTree as ET
-          skip_paths = ("cts", "developers/", "prebuilts/clang/host/darwin", "prebuilts/gcc/darwin", "prebuilts/gcc/linux-x86/mips", "prebuilts/gcc/linux-x86/x86", "prebuilts/go/darwin", "prebuilts/python/darwin", "prebuilts/qemu-kernel", "prebuilts/android-emulator")
+          skip_paths = (
+              "developers/",
+              "prebuilts/build-tools/darwin",
+              "prebuilts/clang/host/darwin",
+              "prebuilts/gcc/darwin",
+              "prebuilts/gcc/linux-x86/mips",
+              "prebuilts/gcc/linux-x86/x86",
+              "prebuilts/go/darwin",
+              "prebuilts/python/darwin",
+              "prebuilts/qemu-kernel",
+              "prebuilts/android-emulator",
+          )
           names = set()
           for f in glob.glob(".repo/manifests/**/*.xml", recursive=True):
               try:
                   for p in ET.parse(f).getroot().findall(".//project"):
                       path = p.get("path", "")
                       name = p.get("name", "")
-                      if name and (path == "cts" or path.startswith(skip_paths)):
+                      if name and path.startswith(skip_paths):
                           names.add(name)
               except Exception:
                   pass
@@ -100,7 +111,7 @@ jobs:
               for n in sorted(names):
                   out.write(f"  <remove-project name=\"{n}\" />\n")
               out.write("</manifest>\n")
-          print(f"Đã chặn {len(names)} project thừa.")
+          print(f"Đã chặn {len(names)} project toolchain thừa.")
           '
 
           # 3. Sync tối giản 1 lệnh duy nhất rồi xóa ngay .repo
