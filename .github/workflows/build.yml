@@ -81,7 +81,7 @@ jobs:
           </manifest>
           EOF
 
-          # 2. Chỉ chặn các toolchain & tài liệu thừa (giữ lại prebuilts/ndk cho libc++_static.a)
+          # 2. Chỉ chặn các toolchain & tài liệu thừa ngoài kiến trúc arm/arm64 (giữ lại prebuilts/jdk/jdk8 và prebuilts/ndk)
           python3 -c '
           import glob, xml.etree.ElementTree as ET
           skip_paths = (
@@ -95,7 +95,6 @@ jobs:
               "prebuilts/python/darwin",
               "prebuilts/qemu-kernel",
               "prebuilts/android-emulator",
-              "prebuilts/jdk/jdk8",
           )
           names = set()
           for f in glob.glob(".repo/manifests/**/*.xml", recursive=True):
