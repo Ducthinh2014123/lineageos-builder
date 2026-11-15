@@ -22,13 +22,17 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Giải phóng ~45GB rác trên Host Runner & Chuẩn bị /mnt + /out
+      - name: Giải phóng ~45GB rác, tạo 1.5GB Swap trên /mnt & Chuẩn bị /out
         run: |
           sudo swapoff -a || true
           sudo rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
           sudo rm -rf /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet \
             /usr/local/.ghcup /usr/local/share/boost /usr/local/share/powershell \
             /usr/share/swift /usr/local/julia* /usr/share/doc/* /usr/share/man/* 2>/dev/null || true
+          sudo fallocate -l 1536M /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
           sudo mkdir -p /mnt/lineage /out /var/tmp/ccache
           sudo chown -R $USER:$USER /mnt /out /var/tmp/ccache
           df -h / /mnt
@@ -132,7 +136,7 @@ jobs:
           export WITH_DEXPREOPT_BOOT_IMG_AND_SYSTEM_SERVER_ONLY=true
           export STRIP_EVERYTHING=true
           export GOMAXPROCS=2
-          export _JAVA_OPTIONS="-Xmx5g"
+          export _JAVA_OPTIONS="-Xmx4g"
           export USE_CCACHE=1
           export CCACHE_COMPRESS=1
           export CCACHE_DIR=/var/tmp/ccache
