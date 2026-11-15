@@ -27,10 +27,11 @@ jobs:
         - /mnt:/mnt
 
     steps:
-      - name: Kiểm tra & Dọn sạch phân vùng (/mnt)
+      - name: Dọn rác phân vùng (/) & Xóa sạch 100% (/mnt)
         run: |
-          rm -rf /mnt/lineage 2>/dev/null || true
-          mkdir -p /mnt/lineage /mnt/ccache
+          rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
+          rm -rf /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /tmp/* /var/tmp/* 2>/dev/null || true
+          mkdir -p /mnt/lineage /var/tmp/ccache
           df -h / /mnt
           free -h
 
@@ -53,22 +54,22 @@ jobs:
           git config --global user.name "Ducthinh2014123"
           git config --global user.email "Ducthinh2014123@users.noreply.github.com"
 
-      - name: Khôi phục CCache từ lần chạy trước (Nằm trên /mnt)
+      - name: Khôi phục CCache từ lần chạy trước (Nằm trên /)
         uses: actions/cache/restore@v4
         with:
-          path: /mnt/ccache
+          path: /var/tmp/ccache
           key: ccache-gta2slte-${{ github.run_id }}
           restore-keys: |
             ccache-gta2slte-
 
-      - name: Sync Full Repo (Nằm trên /mnt)
+      - name: Sync mã nguồn tối giản & Dọn sạch .repo (Nằm trên /mnt)
         run: |
-          rm -rf /mnt/lineage 2>/dev/null || true
+          rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
           mkdir -p /mnt/lineage/.repo/local_manifests
           cd /mnt/lineage
           repo init -u https://github.com/LineageOS/android.git -b lineage-18.1 --depth=1 --git-lfs
 
-          # Manifest thiết bị gta2slte
+          # 1. Manifest thiết bị gta2slte (gồm cả sony/timekeep để lunch không phải sync lại)
           cat << 'EOF' > .repo/local_manifests/gta2slte.xml
           <?xml version="1.0" encoding="UTF-8"?>
           <manifest>
@@ -76,16 +77,39 @@ jobs:
             <project name="Ducthinh2014123/proprietary_vendor_samsung_gta2slte" path="vendor/samsung/gta2slte" remote="github" revision="lineage-18.1" />
             <project name="Ducthinh2014123/android_kernel_samsung_msm8937" path="kernel/samsung/msm8937" remote="github" revision="lineage-18.1" />
             <project name="LineageOS/android_hardware_samsung" path="hardware/samsung" remote="github" revision="lineage-18.1" />
+            <project name="LineageOS/android_hardware_sony_timekeep" path="hardware/sony/timekeep" remote="github" revision="lineage-18.1" />
           </manifest>
           EOF
 
-          # Sync đầy đủ toàn bộ repo (không chặn cts hay prebuilts) và dừng ngay nếu có repo lỗi.
-          # Ghi log vào /mnt để tránh làm đầy ổ đĩa runner bởi output quá lớn.
+          # 2. Chặn tải trước ~25GB gói test cts & toolchain không dùng tới (giữ lại test/vts cho ckati)
+          python3 -c '
+          import glob, xml.etree.ElementTree as ET
+          skip_paths = ("cts", "developers/", "prebuilts/clang/host/darwin", "prebuilts/gcc/darwin", "prebuilts/gcc/linux-x86/mips", "prebuilts/gcc/linux-x86/x86", "prebuilts/go/darwin", "prebuilts/python/darwin", "prebuilts/qemu-kernel", "prebuilts/android-emulator")
+          names = set()
+          for f in glob.glob(".repo/manifests/**/*.xml", recursive=True):
+              try:
+                  for p in ET.parse(f).getroot().findall(".//project"):
+                      path = p.get("path", "")
+                      name = p.get("name", "")
+                      if name and (path == "cts" or path.startswith(skip_paths)):
+                          names.add(name)
+              except Exception:
+                  pass
+          with open(".repo/local_manifests/remove.xml", "w") as out:
+              out.write("<manifest>\n")
+              for n in sorted(names):
+                  out.write(f"  <remove-project name=\"{n}\" />\n")
+              out.write("</manifest>\n")
+          print(f"Đã chặn {len(names)} project thừa.")
+          '
+
+          # 3. Sync tối giản 1 lệnh duy nhất rồi xóa ngay .repo
           if ! repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune --fail-fast --quiet > /mnt/repo-sync.log 2>&1; then
             echo "repo sync thất bại, hiển thị 200 dòng cuối của log:"
             tail -n 200 /mnt/repo-sync.log || true
             exit 1
           fi
+          rm -rf .repo /mnt/repo-sync.log
           df -h / /mnt
 
       - name: Biên dịch ROM trên /mnt (Tự giải phóng file trung gian & Chặn timeout 315m)
@@ -100,7 +124,7 @@ jobs:
           export _JAVA_OPTIONS="-Xmx5g"
           export USE_CCACHE=1
           export CCACHE_COMPRESS=1
-          export CCACHE_DIR=/mnt/ccache
+          export CCACHE_DIR=/var/tmp/ccache
           export CCACHE_EXEC=/usr/bin/ccache
           ccache -M 15G
           ccache -z
@@ -164,17 +188,17 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-      - name: Dọn thư mục out nếu build lỗi hoặc dừng timeout để nén CCache
+      - name: Dọn sạch toàn bộ /mnt nếu build lỗi hoặc dừng timeout để nén CCache
         if: failure()
         run: |
-          export CCACHE_DIR=/mnt/ccache
+          export CCACHE_DIR=/var/tmp/ccache
           command -v ccache >/dev/null 2>&1 && ccache -s || true
-          rm -rf /mnt/lineage 2>/dev/null || true
+          rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* /tmp/* 2>/dev/null || true
           df -h / /mnt
 
       - name: Lưu lại CCache bất chấp build thành công hay thất bại
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: /mnt/ccache
+          path: /var/tmp/ccache
           key: ccache-gta2slte-${{ github.run_id }}
