@@ -81,7 +81,7 @@ jobs:
           </manifest>
           EOF
 
-          # 2. Chỉ chặn các toolchain & tài liệu nặng ngoài cây quét Android.mk/Android.bp
+          # 2. Chỉ chặn các toolchain & tài liệu thừa (giữ lại prebuilts/ndk cho libc++_static.a)
           python3 -c '
           import glob, xml.etree.ElementTree as ET
           skip_paths = (
@@ -96,7 +96,6 @@ jobs:
               "prebuilts/qemu-kernel",
               "prebuilts/android-emulator",
               "prebuilts/jdk/jdk8",
-              "prebuilts/ndk",
           )
           names = set()
           for f in glob.glob(".repo/manifests/**/*.xml", recursive=True):
@@ -116,7 +115,7 @@ jobs:
           print(f"Đã chặn {len(names)} project toolchain thừa.")
           '
 
-          # 3. Sync tối giản 1 lệnh duy nhất rồi xóa ngay .repo (giữ nguyên 100% cts và test/vts)
+          # 3. Sync tối giản 1 lệnh duy nhất rồi xóa ngay .repo
           if ! repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune --fail-fast --quiet > /mnt/repo-sync.log 2>&1; then
             echo "repo sync thất bại, hiển thị 200 dòng cuối của log:"
             tail -n 200 /mnt/repo-sync.log || true
