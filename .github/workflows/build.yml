@@ -30,7 +30,7 @@ jobs:
       - name: Dọn rác phân vùng (/) & Xóa sạch 100% (/mnt)
         run: |
           rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
-          rm -rf /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /tmp/* /var/tmp/* 2>/dev/null || true
+          rm -rf /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /usr/share/doc/* /usr/share/man/* /tmp/* /var/tmp/* 2>/dev/null || true
           mkdir -p /mnt/lineage /var/tmp/ccache
           df -h / /mnt
           free -h
@@ -81,7 +81,7 @@ jobs:
           </manifest>
           EOF
 
-          # 2. Chặn tải các toolchain & tài liệu nặng ngoài cây quét Android.mk
+          # 2. Chỉ chặn các toolchain & tài liệu nặng ngoài cây quét Android.mk/Android.bp
           python3 -c '
           import glob, xml.etree.ElementTree as ET
           skip_paths = (
@@ -116,16 +116,13 @@ jobs:
           print(f"Đã chặn {len(names)} project toolchain thừa.")
           '
 
-          # 3. Sync tối giản 1 lệnh duy nhất rồi xóa ngay .repo
+          # 3. Sync tối giản 1 lệnh duy nhất rồi xóa ngay .repo (giữ nguyên 100% cts và test/vts)
           if ! repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune --fail-fast --quiet > /mnt/repo-sync.log 2>&1; then
             echo "repo sync thất bại, hiển thị 200 dòng cuối của log:"
             tail -n 200 /mnt/repo-sync.log || true
             exit 1
           fi
           rm -rf .repo /mnt/repo-sync.log
-
-          # 4. Giữ nguyên file .mk/.bp trong cts & test/vts cho ckati nhưng xóa sạch file media/data nặng (~12GB)
-          find cts test/vts -type f ! \( -name "*.mk" -o -name "*.bp" -o -name "*.xml" -o -name "*.py" -o -name "*.sh" -o -name "*.go" \) -delete 2>/dev/null || true
           df -h / /mnt
 
       - name: Biên dịch ROM trên /mnt (Tự giải phóng file trung gian & Chặn timeout 315m)
@@ -147,16 +144,16 @@ jobs:
 
           (
             while true; do
-              sleep 60
+              sleep 45
               AVAIL_KB=$(df --output=avail /mnt | tail -n 1)
               AVAIL_GB=$((AVAIL_KB / 1024 / 1024))
               echo "[DISK WATCH] Dung lượng trống trên /mnt: ${AVAIL_GB} GB"
 
               if [ "$AVAIL_KB" -lt 23068672 ] && [ "$AVAIL_KB" -ge 4194304 ]; then
                 echo "[DISK CLEAN] /mnt dưới 22GB — dọn file .o trung gian đã lưu trong CCache..."
-                find /mnt/lineage/out/soong/.intermediates -type f -name "*.o" -mmin +5 -delete 2>/dev/null || true
-                find /mnt/lineage/out/target/product/gta2slte/obj -type f -name "*.o" -mmin +5 -delete 2>/dev/null || true
-                find /mnt/lineage/out -type f \( -name "*.log" -o -name "*.tmp" \) -mmin +5 -delete 2>/dev/null || true
+                find /mnt/lineage/out/soong/.intermediates -type f -name "*.o" -mmin +3 -delete 2>/dev/null || true
+                find /mnt/lineage/out/target/product/gta2slte/obj -type f -name "*.o" -mmin +3 -delete 2>/dev/null || true
+                find /mnt/lineage/out -type f \( -name "*.log" -o -name "*.tmp" \) -mmin +3 -delete 2>/dev/null || true
               elif [ "$AVAIL_KB" -lt 4194304 ]; then
                 echo "[CẢNH BÁO] /mnt còn dưới 4GB — chủ động dừng ninja để bảo toàn CCache!"
                 pkill -f ninja || true
