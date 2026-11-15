@@ -78,12 +78,10 @@ jobs:
           </manifest>
           EOF
 
-          # 2. Chặn các toolchain đa nền tảng & bộ test không dùng tới
+          # 2. Chặn các toolchain đa nền tảng không dùng tới (giữ nguyên cts, test/vts, ndk, jdk8)
           python3 -c '
           import glob, xml.etree.ElementTree as ET
           skip_paths = (
-              "cts",
-              "test/vts",
               "developers/",
               "prebuilts/build-tools/darwin",
               "prebuilts/clang/host/darwin",
@@ -110,7 +108,7 @@ jobs:
               for n in sorted(names):
                   out.write(f"  <remove-project name=\"{n}\" />\n")
               out.write("</manifest>\n")
-          print(f"Đã chặn {len(names)} project thừa.")
+          print(f"Đã chặn {len(names)} project toolchain thừa.")
           '
 
           # 3. Sync tối giản 1 lệnh duy nhất rồi xóa ngay .repo
@@ -119,7 +117,7 @@ jobs:
             tail -n 200 /mnt/repo-sync.log || true
             exit 1
           fi
-          rm -rf .repo /mnt/repo-sync.log cts test/vts
+          rm -rf .repo /mnt/repo-sync.log
           df -h / /mnt
 
       - name: Biên dịch ROM trên /mnt (Giữ nguyên file .o & Chặn timeout 315m)
