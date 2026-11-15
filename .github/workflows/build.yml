@@ -22,13 +22,15 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Giải phóng ~38GB rác có sẵn trên Host Runner & Dọn sạch /mnt
+      - name: Giải phóng ~45GB rác trên Host Runner & Chuẩn bị /mnt + /out
         run: |
           sudo swapoff -a || true
           sudo rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
-          sudo rm -rf /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /usr/local/share/boost /usr/local/share/powershell /usr/share/doc/* /usr/share/man/* 2>/dev/null || true
-          sudo mkdir -p /mnt/lineage /var/tmp/ccache
-          sudo chown -R $USER:$USER /mnt /var/tmp/ccache
+          sudo rm -rf /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet \
+            /usr/local/.ghcup /usr/local/share/boost /usr/local/share/powershell \
+            /usr/share/swift /usr/local/julia* /usr/share/doc/* /usr/share/man/* 2>/dev/null || true
+          sudo mkdir -p /mnt/lineage /out /var/tmp/ccache
+          sudo chown -R $USER:$USER /mnt /out /var/tmp/ccache
           df -h / /mnt
           free -h
 
@@ -120,11 +122,12 @@ jobs:
           rm -rf .repo /mnt/repo-sync.log
           df -h / /mnt
 
-      - name: Biên dịch ROM trên /mnt (Giữ nguyên file .o & Chặn timeout 315m)
+      - name: Biên dịch ROM (Source trên /mnt, Out trên /out 115GB trống)
         run: |
           cd /mnt/lineage
           rm -rf hardware/ril/reference-ril
           ulimit -n 65535
+          export OUT_DIR_COMMON_BASE=/out
           export ALLOW_MISSING_DEPENDENCIES=true
           export WITH_DEXPREOPT_BOOT_IMG_AND_SYSTEM_SERVER_ONLY=true
           export STRIP_EVERYTHING=true
@@ -133,6 +136,7 @@ jobs:
           export USE_CCACHE=1
           export CCACHE_COMPRESS=1
           export CCACHE_DIR=/var/tmp/ccache
+          export CCACHE_BASEDIR=/mnt/lineage
           export CCACHE_EXEC=/usr/bin/ccache
           ccache -M 15G
           ccache -z
@@ -140,12 +144,14 @@ jobs:
           (
             while true; do
               sleep 60
-              AVAIL_KB=$(df --output=avail /mnt | tail -n 1)
-              AVAIL_GB=$((AVAIL_KB / 1024 / 1024))
-              echo "[DISK WATCH] Dung lượng trống trên /mnt: ${AVAIL_GB} GB"
+              ROOT_KB=$(df --output=avail / | tail -n 1)
+              MNT_KB=$(df --output=avail /mnt | tail -n 1)
+              ROOT_GB=$((ROOT_KB / 1024 / 1024))
+              MNT_GB=$((MNT_KB / 1024 / 1024))
+              echo "[DISK WATCH] Trống trên / (out): ${ROOT_GB} GB | Trống trên /mnt (src): ${MNT_GB} GB"
 
-              if [ "$AVAIL_KB" -lt 4194304 ]; then
-                echo "[CẢNH BÁO] /mnt còn dưới 4GB — chủ động dừng ninja để bảo toàn CCache!"
+              if [ "$ROOT_KB" -lt 2097152 ] || [ "$MNT_KB" -lt 2097152 ]; then
+                echo "[CẢNH BÁO] Dung lượng trống còn dưới 2GB — chủ động dừng ninja để bảo toàn CCache!"
                 pkill -f ninja || true
                 break
               fi
@@ -176,9 +182,9 @@ jobs:
           name: LineageOS 18.1 gta2slte (${{ github.event.inputs.build_target }} #${{ github.run_number }})
           fail_on_unmatched_files: false
           files: |
-            /mnt/lineage/out/target/product/gta2slte/lineage-18.1-*.zip
-            /mnt/lineage/out/target/product/gta2slte/boot.img
-            /mnt/lineage/out/target/product/gta2slte/recovery.img
+            /out/lineage/target/product/gta2slte/lineage-18.1-*.zip
+            /out/lineage/target/product/gta2slte/boot.img
+            /out/lineage/target/product/gta2slte/recovery.img
 
       - name: Đính kèm file ROM trực tiếp vào Build (Artifacts dự phòng)
         if: success()
@@ -186,18 +192,18 @@ jobs:
         with:
           name: LineageOS-18.1-gta2slte-${{ github.run_number }}
           path: |
-            /mnt/lineage/out/target/product/gta2slte/lineage-18.1-*.zip
-            /mnt/lineage/out/target/product/gta2slte/boot.img
-            /mnt/lineage/out/target/product/gta2slte/recovery.img
+            /out/lineage/target/product/gta2slte/lineage-18.1-*.zip
+            /out/lineage/target/product/gta2slte/boot.img
+            /out/lineage/target/product/gta2slte/recovery.img
           retention-days: 7
           if-no-files-found: warn
 
-      - name: Dọn sạch toàn bộ /mnt nếu build lỗi hoặc dừng timeout để nén CCache
+      - name: Dọn sạch /mnt và /out nếu build lỗi hoặc dừng timeout để nén CCache
         if: failure()
         run: |
           export CCACHE_DIR=/var/tmp/ccache
           command -v ccache >/dev/null 2>&1 && ccache -s || true
-          rm -rf /mnt/lineage 2>/dev/null || true
+          rm -rf /mnt/lineage /out/lineage 2>/dev/null || true
           df -h / /mnt
 
       - name: Lưu lại CCache bất chấp build thành công hay thất bại
