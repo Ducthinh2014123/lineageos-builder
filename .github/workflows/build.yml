@@ -61,7 +61,7 @@ jobs:
           restore-keys: |
             ccache-gta2slte-
 
-      - name: Sync Full Repo & Dọn sạch .repo (Nằm trên /mnt)
+      - name: Sync Full Repo (Nằm trên /mnt)
         run: |
           rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
           mkdir -p /mnt/lineage/.repo/local_manifests
@@ -81,7 +81,6 @@ jobs:
 
           # Sync đầy đủ toàn bộ repo (không chặn cts hay prebuilts) và dừng ngay nếu có repo lỗi
           repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune --fail-fast
-          rm -rf .repo
           df -h / /mnt
 
       - name: Biên dịch ROM trên /mnt (Tự giải phóng file trung gian & Chặn timeout 315m)
