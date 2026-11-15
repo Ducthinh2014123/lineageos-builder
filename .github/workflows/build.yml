@@ -61,14 +61,14 @@ jobs:
           restore-keys: |
             ccache-gta2slte-
 
-      - name: Sync mã nguồn tối giản & Dọn sạch .repo (Nằm trên /mnt)
+      - name: Sync Full Repo & Dọn sạch .repo (Nằm trên /mnt)
         run: |
           rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
           mkdir -p /mnt/lineage/.repo/local_manifests
           cd /mnt/lineage
           repo init -u https://github.com/LineageOS/android.git -b lineage-18.1 --depth=1 --git-lfs
 
-          # 1. Manifest thiết bị gta2slte
+          # Manifest thiết bị gta2slte
           cat << 'EOF' > .repo/local_manifests/gta2slte.xml
           <?xml version="1.0" encoding="UTF-8"?>
           <manifest>
@@ -79,30 +79,8 @@ jobs:
           </manifest>
           EOF
 
-          # 2. Chặn tải trước ~25GB gói test cts & toolchain không dùng tới (giữ lại test/vts cho ckati)
-          python3 -c '
-          import glob, xml.etree.ElementTree as ET
-          skip_paths = ("cts", "developers/", "prebuilts/clang/host/darwin", "prebuilts/gcc/darwin", "prebuilts/gcc/linux-x86/mips", "prebuilts/gcc/linux-x86/x86", "prebuilts/go/darwin", "prebuilts/python/darwin", "prebuilts/qemu-kernel", "prebuilts/android-emulator")
-          names = set()
-          for f in glob.glob(".repo/manifests/**/*.xml", recursive=True):
-              try:
-                  for p in ET.parse(f).getroot().findall(".//project"):
-                      path = p.get("path", "")
-                      name = p.get("name", "")
-                      if name and (path == "cts" or path.startswith(skip_paths)):
-                          names.add(name)
-              except Exception:
-                  pass
-          with open(".repo/local_manifests/remove.xml", "w") as out:
-              out.write("<manifest>\n")
-              for n in sorted(names):
-                  out.write(f"  <remove-project name=\"{n}\" />\n")
-              out.write("</manifest>\n")
-          print(f"Đã chặn {len(names)} project thừa.")
-          '
-
-          # 3. Sync tối giản 1 lệnh duy nhất rồi xóa ngay .repo
-          repo sync -c -q --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune -j8
+          # Sync đầy đủ toàn bộ repo (không chặn cts hay prebuilts) và dừng ngay nếu có repo lỗi
+          repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune --fail-fast
           rm -rf .repo
           df -h / /mnt
 
