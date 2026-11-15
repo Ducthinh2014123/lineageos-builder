@@ -79,17 +79,17 @@ jobs:
           </manifest>
           EOF
 
-          # 2. Tự động trích xuất đúng tên project thừa từ manifest của LineageOS để chặn tải
+          # 2. Chặn tải trước ~25GB gói test cts & toolchain không dùng tới (giữ lại test/vts cho ckati)
           python3 -c '
           import glob, xml.etree.ElementTree as ET
-          skip_paths = ("cts", "test/vts", "developers/", "prebuilts/clang/host/darwin", "prebuilts/gcc/darwin", "prebuilts/gcc/linux-x86/mips", "prebuilts/gcc/linux-x86/x86", "prebuilts/go/darwin", "prebuilts/python/darwin", "prebuilts/qemu-kernel", "prebuilts/android-emulator")
+          skip_paths = ("cts", "developers/", "prebuilts/clang/host/darwin", "prebuilts/gcc/darwin", "prebuilts/gcc/linux-x86/mips", "prebuilts/gcc/linux-x86/x86", "prebuilts/go/darwin", "prebuilts/python/darwin", "prebuilts/qemu-kernel", "prebuilts/android-emulator")
           names = set()
           for f in glob.glob(".repo/manifests/**/*.xml", recursive=True):
               try:
                   for p in ET.parse(f).getroot().findall(".//project"):
                       path = p.get("path", "")
                       name = p.get("name", "")
-                      if name and (path in ("cts", "test/vts") or path.startswith(skip_paths)):
+                      if name and (path == "cts" or path.startswith(skip_paths)):
                           names.add(name)
               except Exception:
                   pass
