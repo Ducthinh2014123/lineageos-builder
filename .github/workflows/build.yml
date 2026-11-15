@@ -79,8 +79,13 @@ jobs:
           </manifest>
           EOF
 
-          # Sync đầy đủ toàn bộ repo (không chặn cts hay prebuilts) và dừng ngay nếu có repo lỗi
-          repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune --fail-fast
+          # Sync đầy đủ toàn bộ repo (không chặn cts hay prebuilts) và dừng ngay nếu có repo lỗi.
+          # Ghi log vào /mnt để tránh làm đầy ổ đĩa runner bởi output quá lớn.
+          if ! repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune --fail-fast --quiet > /mnt/repo-sync.log 2>&1; then
+            echo "repo sync thất bại, hiển thị 200 dòng cuối của log:"
+            tail -n 200 /mnt/repo-sync.log || true
+            exit 1
+          fi
           df -h / /mnt
 
       - name: Biên dịch ROM trên /mnt (Tự giải phóng file trung gian & Chặn timeout 315m)
