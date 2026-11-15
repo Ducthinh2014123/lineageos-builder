@@ -29,8 +29,8 @@ jobs:
     steps:
       - name: Kiểm tra & Dọn sạch phân vùng (/mnt)
         run: |
-          rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
-          mkdir -p /mnt/lineage /var/tmp/ccache
+          rm -rf /mnt/lineage 2>/dev/null || true
+          mkdir -p /mnt/lineage /mnt/ccache
           df -h / /mnt
           free -h
 
@@ -53,17 +53,17 @@ jobs:
           git config --global user.name "Ducthinh2014123"
           git config --global user.email "Ducthinh2014123@users.noreply.github.com"
 
-      - name: Khôi phục CCache từ lần chạy trước (Nằm trên /)
+      - name: Khôi phục CCache từ lần chạy trước (Nằm trên /mnt)
         uses: actions/cache/restore@v4
         with:
-          path: /var/tmp/ccache
+          path: /mnt/ccache
           key: ccache-gta2slte-${{ github.run_id }}
           restore-keys: |
             ccache-gta2slte-
 
       - name: Sync Full Repo (Nằm trên /mnt)
         run: |
-          rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
+          rm -rf /mnt/lineage 2>/dev/null || true
           mkdir -p /mnt/lineage/.repo/local_manifests
           cd /mnt/lineage
           repo init -u https://github.com/LineageOS/android.git -b lineage-18.1 --depth=1 --git-lfs
@@ -100,7 +100,7 @@ jobs:
           export _JAVA_OPTIONS="-Xmx5g"
           export USE_CCACHE=1
           export CCACHE_COMPRESS=1
-          export CCACHE_DIR=/var/tmp/ccache
+          export CCACHE_DIR=/mnt/ccache
           export CCACHE_EXEC=/usr/bin/ccache
           ccache -M 15G
           ccache -z
@@ -167,14 +167,14 @@ jobs:
       - name: Dọn thư mục out nếu build lỗi hoặc dừng timeout để nén CCache
         if: failure()
         run: |
-          export CCACHE_DIR=/var/tmp/ccache
+          export CCACHE_DIR=/mnt/ccache
           command -v ccache >/dev/null 2>&1 && ccache -s || true
-          rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
+          rm -rf /mnt/lineage 2>/dev/null || true
           df -h / /mnt
 
       - name: Lưu lại CCache bất chấp build thành công hay thất bại
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: /var/tmp/ccache
+          path: /mnt/ccache
           key: ccache-gta2slte-${{ github.run_id }}
