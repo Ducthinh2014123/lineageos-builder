@@ -81,7 +81,7 @@ jobs:
           </manifest>
           EOF
 
-          # 2. Chỉ chặn các toolchain & tài liệu nặng ngoài cây quét Android.mk của ckati (~15GB)
+          # 2. Chặn tải các toolchain & tài liệu nặng ngoài cây quét Android.mk
           python3 -c '
           import glob, xml.etree.ElementTree as ET
           skip_paths = (
@@ -95,6 +95,8 @@ jobs:
               "prebuilts/python/darwin",
               "prebuilts/qemu-kernel",
               "prebuilts/android-emulator",
+              "prebuilts/jdk/jdk8",
+              "prebuilts/ndk",
           )
           names = set()
           for f in glob.glob(".repo/manifests/**/*.xml", recursive=True):
@@ -121,6 +123,9 @@ jobs:
             exit 1
           fi
           rm -rf .repo /mnt/repo-sync.log
+
+          # 4. Giữ nguyên file .mk/.bp trong cts & test/vts cho ckati nhưng xóa sạch file media/data nặng (~12GB)
+          find cts test/vts -type f ! \( -name "*.mk" -o -name "*.bp" -o -name "*.xml" -o -name "*.py" -o -name "*.sh" -o -name "*.go" \) -delete 2>/dev/null || true
           df -h / /mnt
 
       - name: Biên dịch ROM trên /mnt (Tự giải phóng file trung gian & Chặn timeout 315m)
@@ -142,15 +147,16 @@ jobs:
 
           (
             while true; do
-              sleep 480
+              sleep 60
               AVAIL_KB=$(df --output=avail /mnt | tail -n 1)
               AVAIL_GB=$((AVAIL_KB / 1024 / 1024))
               echo "[DISK WATCH] Dung lượng trống trên /mnt: ${AVAIL_GB} GB"
 
-              if [ "$AVAIL_KB" -lt 15728640 ] && [ "$AVAIL_KB" -ge 4194304 ]; then
-                echo "[DISK CLEAN] /mnt dưới 15GB — dọn file .o trung gian đã lưu trong CCache..."
-                find /mnt/lineage/out/soong/.intermediates -type f -name "*.o" -mmin +20 -delete 2>/dev/null || true
-                find /mnt/lineage/out -type f \( -name "*.log" -o -name "*.tmp" \) -mmin +15 -delete 2>/dev/null || true
+              if [ "$AVAIL_KB" -lt 23068672 ] && [ "$AVAIL_KB" -ge 4194304 ]; then
+                echo "[DISK CLEAN] /mnt dưới 22GB — dọn file .o trung gian đã lưu trong CCache..."
+                find /mnt/lineage/out/soong/.intermediates -type f -name "*.o" -mmin +5 -delete 2>/dev/null || true
+                find /mnt/lineage/out/target/product/gta2slte/obj -type f -name "*.o" -mmin +5 -delete 2>/dev/null || true
+                find /mnt/lineage/out -type f \( -name "*.log" -o -name "*.tmp" \) -mmin +5 -delete 2>/dev/null || true
               elif [ "$AVAIL_KB" -lt 4194304 ]; then
                 echo "[CẢNH BÁO] /mnt còn dưới 4GB — chủ động dừng ninja để bảo toàn CCache!"
                 pkill -f ninja || true
