@@ -1,4 +1,4 @@
-name: Build LineageOS 18.1 for gta2slte (Dual-Partition 140GB)
+name: Build LineageOS 18.1 for gta2slte (Full-Disk 146GB)
 
 on:
   workflow_dispatch:
@@ -18,43 +18,40 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     timeout-minutes: 360
-    container:
-      image: ubuntu:20.04
-      options: --privileged
-      volumes:
-        - /mnt:/mnt
 
     steps:
-      - name: Dọn rác phân vùng (/) & Xóa sạch 100% (/mnt)
+      - name: Giải phóng ~38GB rác có sẵn trên Host Runner & Dọn sạch /mnt
         run: |
-          rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
-          rm -rf /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /usr/share/doc/* /usr/share/man/* /tmp/* /var/tmp/* 2>/dev/null || true
-          mkdir -p /mnt/lineage /var/tmp/ccache
+          sudo swapoff -a || true
+          sudo rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
+          sudo rm -rf /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /usr/local/share/boost /usr/local/share/powershell /usr/share/doc/* /usr/share/man/* 2>/dev/null || true
+          sudo mkdir -p /mnt/lineage /var/tmp/ccache
+          sudo chown -R $USER:$USER /mnt /var/tmp/ccache
           df -h / /mnt
           free -h
 
-      - name: Cài đặt bộ công cụ build tối giản (Đủ 7z, unzip, wget, curl...)
+      - name: Cài đặt bộ công cụ build LineageOS 18.1
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             bc bison build-essential ccache curl flex fontconfig g++-multilib gcc-multilib \
             git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev \
             lib32z1-dev libfreetype6 liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
             libssl-dev libxml2 libxml2-utils lzop p7zip-full pngcrush python3 python3-protobuf \
             python-is-python3 rsync schedtool squashfs-tools tar unzip xsltproc xz-utils zip \
             zlib1g-dev ca-certificates wget
-          ln -sf /usr/lib/x86_64-linux-gnu/libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5 || true
-          ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
-          rm -rf /var/lib/apt/lists/* /tmp/*
-          mkdir -p /usr/local/bin
-          curl -s https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
-          chmod a+x /usr/local/bin/repo
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5 || true
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
+          sudo rm -rf /var/lib/apt/lists/* /tmp/*
+          sudo mkdir -p /usr/local/bin
+          sudo curl -s https://storage.googleapis.com/git-repo-downloads/repo -o /usr/local/bin/repo
+          sudo chmod a+x /usr/local/bin/repo
           git config --global user.name "Ducthinh2014123"
           git config --global user.email "Ducthinh2014123@users.noreply.github.com"
 
-      - name: Khôi phục CCache từ lần chạy trước (Nằm trên /)
+      - name: Khôi phục CCache từ lần chạy trước
         uses: actions/cache/restore@v4
         with:
           path: /var/tmp/ccache
@@ -64,7 +61,7 @@ jobs:
 
       - name: Sync mã nguồn tối giản & Dọn sạch .repo (Nằm trên /mnt)
         run: |
-          rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
+          rm -rf /mnt/lineage 2>/dev/null || true
           mkdir -p /mnt/lineage/.repo/local_manifests
           cd /mnt/lineage
           repo init -u https://github.com/LineageOS/android.git -b lineage-18.1 --depth=1 --git-lfs
@@ -81,7 +78,7 @@ jobs:
           </manifest>
           EOF
 
-          # 2. Chỉ chặn các toolchain & tài liệu thừa ngoài kiến trúc arm/arm64
+          # 2. Chặn các toolchain đa nền tảng không dùng tới (giữ nguyên cts, test/vts, ndk, jdk8)
           python3 -c '
           import glob, xml.etree.ElementTree as ET
           skip_paths = (
@@ -147,11 +144,11 @@ jobs:
               AVAIL_GB=$((AVAIL_KB / 1024 / 1024))
               echo "[DISK WATCH] Dung lượng trống trên /mnt: ${AVAIL_GB} GB"
 
-              if [ "$AVAIL_KB" -lt 18874368 ] && [ "$AVAIL_KB" -ge 4194304 ]; then
-                echo "[DISK CLEAN] /mnt dưới 18GB — chỉ dọn file .o đã biên dịch trên 25 phút..."
-                find /mnt/lineage/out/soong/.intermediates -type f -name "*.o" -mmin +25 -delete 2>/dev/null || true
-                find /mnt/lineage/out/target/product/gta2slte/obj -type f -name "*.o" -mmin +25 -delete 2>/dev/null || true
-                find /mnt/lineage/out -type f \( -name "*.log" -o -name "*.tmp" \) -mmin +15 -delete 2>/dev/null || true
+              if [ "$AVAIL_KB" -lt 20971520 ] && [ "$AVAIL_KB" -ge 4194304 ]; then
+                echo "[DISK CLEAN] /mnt dưới 20GB — dọn file .o đã biên dịch trên 10 phút..."
+                find /mnt/lineage/out/soong/.intermediates -type f -name "*.o" -mmin +10 -delete 2>/dev/null || true
+                find /mnt/lineage/out/target/product/gta2slte/obj -type f -name "*.o" -mmin +10 -delete 2>/dev/null || true
+                find /mnt/lineage/out -type f \( -name "*.log" -o -name "*.tmp" \) -mmin +10 -delete 2>/dev/null || true
               elif [ "$AVAIL_KB" -lt 4194304 ]; then
                 echo "[CẢNH BÁO] /mnt còn dưới 4GB — chủ động dừng ninja để bảo toàn CCache!"
                 pkill -f ninja || true
@@ -205,7 +202,7 @@ jobs:
         run: |
           export CCACHE_DIR=/var/tmp/ccache
           command -v ccache >/dev/null 2>&1 && ccache -s || true
-          rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* /tmp/* 2>/dev/null || true
+          rm -rf /mnt/lineage 2>/dev/null || true
           df -h / /mnt
 
       - name: Lưu lại CCache bất chấp build thành công hay thất bại
