@@ -81,7 +81,7 @@ jobs:
           </manifest>
           EOF
 
-          # 2. Chỉ chặn các toolchain & tài liệu thừa ngoài kiến trúc arm/arm64 (giữ lại prebuilts/jdk/jdk8 và prebuilts/ndk)
+          # 2. Chỉ chặn các toolchain & tài liệu thừa ngoài kiến trúc arm/arm64
           python3 -c '
           import glob, xml.etree.ElementTree as ET
           skip_paths = (
@@ -142,16 +142,16 @@ jobs:
 
           (
             while true; do
-              sleep 45
+              sleep 60
               AVAIL_KB=$(df --output=avail /mnt | tail -n 1)
               AVAIL_GB=$((AVAIL_KB / 1024 / 1024))
               echo "[DISK WATCH] Dung lượng trống trên /mnt: ${AVAIL_GB} GB"
 
-              if [ "$AVAIL_KB" -lt 23068672 ] && [ "$AVAIL_KB" -ge 4194304 ]; then
-                echo "[DISK CLEAN] /mnt dưới 22GB — dọn file .o trung gian đã lưu trong CCache..."
-                find /mnt/lineage/out/soong/.intermediates -type f -name "*.o" -mmin +3 -delete 2>/dev/null || true
-                find /mnt/lineage/out/target/product/gta2slte/obj -type f -name "*.o" -mmin +3 -delete 2>/dev/null || true
-                find /mnt/lineage/out -type f \( -name "*.log" -o -name "*.tmp" \) -mmin +3 -delete 2>/dev/null || true
+              if [ "$AVAIL_KB" -lt 18874368 ] && [ "$AVAIL_KB" -ge 4194304 ]; then
+                echo "[DISK CLEAN] /mnt dưới 18GB — chỉ dọn file .o đã biên dịch trên 25 phút..."
+                find /mnt/lineage/out/soong/.intermediates -type f -name "*.o" -mmin +25 -delete 2>/dev/null || true
+                find /mnt/lineage/out/target/product/gta2slte/obj -type f -name "*.o" -mmin +25 -delete 2>/dev/null || true
+                find /mnt/lineage/out -type f \( -name "*.log" -o -name "*.tmp" \) -mmin +15 -delete 2>/dev/null || true
               elif [ "$AVAIL_KB" -lt 4194304 ]; then
                 echo "[CẢNH BÁO] /mnt còn dưới 4GB — chủ động dừng ninja để bảo toàn CCache!"
                 pkill -f ninja || true
