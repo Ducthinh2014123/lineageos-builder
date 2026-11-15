@@ -78,10 +78,12 @@ jobs:
           </manifest>
           EOF
 
-          # 2. Chặn các toolchain đa nền tảng không dùng tới (giữ nguyên cts, test/vts, ndk, jdk8)
+          # 2. Chặn các toolchain đa nền tảng & bộ test không dùng tới
           python3 -c '
           import glob, xml.etree.ElementTree as ET
           skip_paths = (
+              "cts",
+              "test/vts",
               "developers/",
               "prebuilts/build-tools/darwin",
               "prebuilts/clang/host/darwin",
@@ -108,7 +110,7 @@ jobs:
               for n in sorted(names):
                   out.write(f"  <remove-project name=\"{n}\" />\n")
               out.write("</manifest>\n")
-          print(f"Đã chặn {len(names)} project toolchain thừa.")
+          print(f"Đã chặn {len(names)} project thừa.")
           '
 
           # 3. Sync tối giản 1 lệnh duy nhất rồi xóa ngay .repo
@@ -117,10 +119,10 @@ jobs:
             tail -n 200 /mnt/repo-sync.log || true
             exit 1
           fi
-          rm -rf .repo /mnt/repo-sync.log
+          rm -rf .repo /mnt/repo-sync.log cts test/vts
           df -h / /mnt
 
-      - name: Biên dịch ROM trên /mnt (Tự giải phóng file trung gian & Chặn timeout 315m)
+      - name: Biên dịch ROM trên /mnt (Giữ nguyên file .o & Chặn timeout 315m)
         run: |
           cd /mnt/lineage
           rm -rf hardware/ril/reference-ril
@@ -144,12 +146,7 @@ jobs:
               AVAIL_GB=$((AVAIL_KB / 1024 / 1024))
               echo "[DISK WATCH] Dung lượng trống trên /mnt: ${AVAIL_GB} GB"
 
-              if [ "$AVAIL_KB" -lt 20971520 ] && [ "$AVAIL_KB" -ge 4194304 ]; then
-                echo "[DISK CLEAN] /mnt dưới 20GB — dọn file .o đã biên dịch trên 10 phút..."
-                find /mnt/lineage/out/soong/.intermediates -type f -name "*.o" -mmin +10 -delete 2>/dev/null || true
-                find /mnt/lineage/out/target/product/gta2slte/obj -type f -name "*.o" -mmin +10 -delete 2>/dev/null || true
-                find /mnt/lineage/out -type f \( -name "*.log" -o -name "*.tmp" \) -mmin +10 -delete 2>/dev/null || true
-              elif [ "$AVAIL_KB" -lt 4194304 ]; then
+              if [ "$AVAIL_KB" -lt 4194304 ]; then
                 echo "[CẢNH BÁO] /mnt còn dưới 4GB — chủ động dừng ninja để bảo toàn CCache!"
                 pkill -f ninja || true
                 break
