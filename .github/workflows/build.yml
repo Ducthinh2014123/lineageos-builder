@@ -1,218 +1,173 @@
-name: Build LineageOS 18.1 for gta2slte (Full-Disk 146GB)
+name: Build LineageOS 18.1 (gta2slte)
 
 on:
   workflow_dispatch:
     inputs:
       build_target:
-        description: 'Mục tiêu build (bacon để build full ROM, systemimage để mồi CCache)'
+        description: 'Mục tiêu build (mặc định: bacon)'
         required: true
         default: 'bacon'
-        type: choice
-        options:
-          - bacon
-          - systemimage
-          - bootimage
-
-permissions:
-  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 360
+    timeout-minutes: 315
 
     steps:
-      - name: Giải phóng ~45GB rác, tạo 1.5GB Swap trên /mnt & Chuẩn bị /out
+      - name: Dọn dẹp sâu ổ / (~60GB trống) và cấu hình 4GB Swap trên /mnt
         run: |
+          echo "=== Dung lượng trước khi dọn ==="
+          df -h / /mnt
+
+          # Tắt swap mặc định và xóa các gói khổng lồ không dùng tới trên ổ /
           sudo swapoff -a || true
-          sudo rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
-          sudo rm -rf /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet \
-            /usr/local/.ghcup /usr/local/share/boost /usr/local/share/powershell \
-            /usr/share/swift /usr/local/julia* /usr/share/doc/* /usr/share/man/* 2>/dev/null || true
-          sudo fallocate -l 1536M /mnt/swapfile
+          sudo rm -f /mnt/swapfile
+          sudo rm -rf /usr/share/dotnet \
+                       /usr/local/lib/android \
+                       /opt/ghc \
+                       /opt/hostedtoolcache/CodeQL \
+                       /usr/local/share/boost \
+                       /usr/local/share/chromium \
+                       /usr/share/miniconda \
+                       /usr/local/aws* \
+                       /usr/local/sqlpackage \
+                       /opt/az \
+                       /usr/lib/firefox \
+                       /opt/google/chrome \
+                       /usr/local/.ghcup \
+                       /usr/share/swift \
+                       /usr/local/julia*
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/* /var/cache/* /tmp/*
+
+          # Tạo 4GB Swap trên /mnt để gánh cụm Java/Metalava
+          sudo fallocate -l 4G /mnt/swapfile
           sudo chmod 600 /mnt/swapfile
           sudo mkswap /mnt/swapfile
           sudo swapon /mnt/swapfile
-          sudo mkdir -p /mnt/lineage /out /var/tmp/ccache
-          sudo chown -R $USER:$USER /mnt /out /var/tmp/ccache
+
+          # Chuẩn bị thư mục làm việc
+          sudo mkdir -p /mnt/lineage /mnt/ccache /out/lineage
+          sudo chown -R $USER:$USER /mnt/lineage /mnt/ccache /out/lineage
+
+          echo "=== Dung lượng sau khi dọn ==="
           df -h / /mnt
           free -h
 
-      - name: Cài đặt bộ công cụ build LineageOS 18.1
+      - name: Cài đặt công cụ biên dịch & Repo
         run: |
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            bc bison build-essential ccache curl flex fontconfig g++-multilib gcc-multilib \
-            git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev \
-            lib32z1-dev libfreetype6 liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
-            libssl-dev libxml2 libxml2-utils lzop p7zip-full pngcrush python3 python3-protobuf \
-            python-is-python3 rsync schedtool squashfs-tools tar unzip xsltproc xz-utils zip \
-            zlib1g-dev ca-certificates wget
-          sudo ln -sf /usr/lib/x86_64-linux-gnu/libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5 || true
-          sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
-          sudo rm -rf /var/lib/apt/lists/* /tmp/*
-          sudo mkdir -p /usr/local/bin
-          sudo curl -s https://storage.googleapis.com/git-repo-downloads/repo -o /usr/local/bin/repo
-          sudo chmod a+x /usr/local/bin/repo
-          git config --global user.name "Ducthinh2014123"
-          git config --global user.email "Ducthinh2014123@users.noreply.github.com"
+          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python-is-python3
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
 
-      - name: Khôi phục CCache từ lần chạy trước
+      - name: Khôi phục CCache
+        id: ccache
         uses: actions/cache/restore@v4
         with:
-          path: /var/tmp/ccache
+          path: /mnt/ccache
           key: ccache-gta2slte-${{ github.run_id }}
           restore-keys: |
             ccache-gta2slte-
 
-      - name: Sync mã nguồn tối giản & Dọn sạch .repo (Nằm trên /mnt)
+      - name: Đồng bộ mã nguồn LineageOS 18.1 & Device Tree (gta2slte)
+        working-directory: /mnt/lineage
         run: |
-          rm -rf /mnt/lineage 2>/dev/null || true
-          mkdir -p /mnt/lineage/.repo/local_manifests
-          cd /mnt/lineage
-          repo init -u https://github.com/LineageOS/android.git -b lineage-18.1 --depth=1 --git-lfs
+          git config --global user.email "builder@github.actions"
+          git config --global user.name "Lineage Builder"
+          git config --global color.ui false
 
-          # 1. Manifest thiết bị gta2slte
-          cat << 'EOF' > .repo/local_manifests/gta2slte.xml
+          repo init -u https://github.com/LineageOS/android.git -b lineage-18.1 --depth=1 --git-lfs
+          mkdir -p .repo/local_manifests
+
+          # Thay link repo device/kernel/vendor của bạn vào bên dưới nếu dùng fork riêng
+          cat << 'EOF' > .repo/local_manifests/roomservice.xml
           <?xml version="1.0" encoding="UTF-8"?>
           <manifest>
             <project name="Ducthinh2014123/android_device_samsung_gta2slte" path="device/samsung/gta2slte" remote="github" revision="lineage-18.1" />
-            <project name="Ducthinh2014123/proprietary_vendor_samsung_gta2slte" path="vendor/samsung/gta2slte" remote="github" revision="lineage-18.1" />
+            <project name="Ducthinh2014123/android_device_samsung_msm8937-common" path="device/samsung/msm8937-common" remote="github" revision="lineage-18.1" />
             <project name="Ducthinh2014123/android_kernel_samsung_msm8937" path="kernel/samsung/msm8937" remote="github" revision="lineage-18.1" />
-            <project name="LineageOS/android_hardware_samsung" path="hardware/samsung" remote="github" revision="lineage-18.1" />
-            <project name="LineageOS/android_hardware_sony_timekeep" path="hardware/sony/timekeep" remote="github" revision="lineage-18.1" />
+            <project name="Ducthinh2014123/proprietary_vendor_samsung" path="vendor/samsung" remote="github" revision="lineage-18.1" />
           </manifest>
           EOF
 
-          # 2. Chặn các toolchain đa nền tảng không dùng tới (giữ nguyên cts, test/vts, ndk, jdk8)
-          python3 -c '
-          import glob, xml.etree.ElementTree as ET
-          skip_paths = (
-              "developers/",
-              "prebuilts/build-tools/darwin",
-              "prebuilts/clang/host/darwin",
-              "prebuilts/gcc/darwin",
-              "prebuilts/gcc/linux-x86/mips",
-              "prebuilts/gcc/linux-x86/x86",
-              "prebuilts/go/darwin",
-              "prebuilts/python/darwin",
-              "prebuilts/qemu-kernel",
-              "prebuilts/android-emulator",
-          )
-          names = set()
-          for f in glob.glob(".repo/manifests/**/*.xml", recursive=True):
-              try:
-                  for p in ET.parse(f).getroot().findall(".//project"):
-                      path = p.get("path", "")
-                      name = p.get("name", "")
-                      if name and path.startswith(skip_paths):
-                          names.add(name)
-              except Exception:
-                  pass
-          with open(".repo/local_manifests/remove.xml", "w") as out:
-              out.write("<manifest>\n")
-              for n in sorted(names):
-                  out.write(f"  <remove-project name=\"{n}\" />\n")
-              out.write("</manifest>\n")
-          print(f"Đã chặn {len(names)} project toolchain thừa.")
-          '
+          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
 
-          # 3. Sync tối giản 1 lệnh duy nhất rồi xóa ngay .repo
-          if ! repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune --fail-fast --quiet > /mnt/repo-sync.log 2>&1; then
-            echo "repo sync thất bại, hiển thị 200 dòng cuối của log:"
-            tail -n 200 /mnt/repo-sync.log || true
-            exit 1
-          fi
-          rm -rf .repo /mnt/repo-sync.log
-          df -h / /mnt
+          # Xóa thư mục .repo sau khi sync để giải phóng thêm ~12GB trên /mnt
+          rm -rf .repo
 
-      - name: Biên dịch ROM (Source trên /mnt, Out trên /out 115GB trống)
+      - name: Biên dịch ROM (Source trên /mnt, Out trên /)
+        working-directory: /mnt/lineage
+        env:
+          USE_CCACHE: 1
+          CCACHE_EXEC: /usr/bin/ccache
+          CCACHE_DIR: /mnt/ccache
+          OUT_DIR_COMMON_BASE: /out
+          _JAVA_OPTIONS: "-Xmx4g"
+          LC_ALL: C
         run: |
-          cd /mnt/lineage
-          rm -rf hardware/ril/reference-ril
-          ulimit -n 65535
-          export OUT_DIR_COMMON_BASE=/out
-          export ALLOW_MISSING_DEPENDENCIES=true
-          export WITH_DEXPREOPT_BOOT_IMG_AND_SYSTEM_SERVER_ONLY=true
-          export STRIP_EVERYTHING=true
-          export GOMAXPROCS=2
-          export _JAVA_OPTIONS="-Xmx4g"
-          export USE_CCACHE=1
-          export CCACHE_COMPRESS=1
-          export CCACHE_DIR=/var/tmp/ccache
-          export CCACHE_BASEDIR=/mnt/lineage
-          export CCACHE_EXEC=/usr/bin/ccache
-          ccache -M 15G
-          ccache -z
+          ccache -M 10G
 
+          # Chạy luồng giám sát ổ đĩa: tự dọn file rác trung gian nếu trống < 6GB, chỉ dừng khi < 1.5GB
           (
+            CLEANED_SYMBOLS=0
             while true; do
-              sleep 60
-              ROOT_KB=$(df --output=avail / | tail -n 1)
-              MNT_KB=$(df --output=avail /mnt | tail -n 1)
-              ROOT_GB=$((ROOT_KB / 1024 / 1024))
-              MNT_GB=$((MNT_KB / 1024 / 1024))
-              echo "[DISK WATCH] Trống trên / (out): ${ROOT_GB} GB | Trống trên /mnt (src): ${MNT_GB} GB"
+              sleep 20
+              AVAIL_ROOT=$(df -BG / | awk 'NR==2 {gsub("G",""); print $4}')
+              AVAIL_MNT=$(df -BG /mnt | awk 'NR==2 {gsub("G",""); print $4}')
+              echo "[DISK WATCH] Trống trên / (out): ${AVAIL_ROOT}GB | Trống trên /mnt (src): ${AVAIL_MNT}GB"
 
-              if [ "$ROOT_KB" -lt 2097152 ] || [ "$MNT_KB" -lt 2097152 ]; then
-                echo "[CẢNH BÁO] Dung lượng trống còn dưới 2GB — chủ động dừng ninja để bảo toàn CCache!"
+              if [ "$AVAIL_ROOT" -lt 7 ] && [ "$CLEANED_SYMBOLS" -eq 0 ]; then
+                echo "[AUTO CLEAN] Ổ / dưới 7GB — xóa symbols và file đối tượng trung gian để lấy chỗ đóng gói ROM..."
+                rm -rf /out/lineage/target/product/gta2slte/symbols
+                find /out/lineage/target/product/gta2slte/obj/STATIC_LIBRARIES -name "*.o" -delete 2>/dev/null || true
+                CLEANED_SYMBOLS=1
+                df -h /
+              fi
+
+              if [ "$AVAIL_ROOT" -lt 2 ] || [ "$AVAIL_MNT" -lt 2 ]; then
+                echo "[CẢNH BÁO] Dung lượng trống chạm đáy dưới 2GB — dừng ninja để bảo toàn CCache!"
                 pkill -f ninja || true
                 break
               fi
             done
           ) &
-          WATCHER_PID=$!
+          WATCH_PID=$!
 
-          set +e
-          timeout 315m bash -c "source build/envsetup.sh && lunch lineage_gta2slte-userdebug && mka ${{ github.event.inputs.build_target }}"
-          STATUS=$?
-          set -e
+          source build/envsetup.sh
+          lunch lineage_gta2slte-userdebug
+          mka ${{ github.event.inputs.build_target }}
+          BUILD_STATUS=$?
 
-          kill $WATCHER_PID 2>/dev/null || true
-
-          if [ $STATUS -eq 124 ]; then
-            echo "Đã chạm mốc 315 phút — chủ động dừng biên dịch để dọn out/ và lưu CCache!"
-            exit 1
-          elif [ $STATUS -ne 0 ]; then
-            exit $STATUS
-          fi
+          kill $WATCH_PID 2>/dev/null || true
+          exit $BUILD_STATUS
 
       - name: Đóng gói & Upload lên GitHub Releases
         if: success()
-        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: LineageOS 18.1 gta2slte (${{ github.event.inputs.build_target }} #${{ github.run_number }})
-          fail_on_unmatched_files: false
+          tag_name: lineage-18.1-gta2slte-${{ github.run_number }}
+          name: LineageOS 18.1 Unofficial - SM-T385 (${{ github.run_number }})
           files: |
             /out/lineage/target/product/gta2slte/lineage-18.1-*.zip
-            /out/lineage/target/product/gta2slte/boot.img
+            /out/lineage/target/product/gta2slte/lineage-18.1-*.zip.sha256sum
             /out/lineage/target/product/gta2slte/recovery.img
 
-      - name: Đính kèm file ROM trực tiếp vào Build (Artifacts dự phòng)
+      - name: Đính kèm file ROM trực tiếp vào Build (Artifacts)
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: LineageOS-18.1-gta2slte-${{ github.run_number }}
           path: |
             /out/lineage/target/product/gta2slte/lineage-18.1-*.zip
-            /out/lineage/target/product/gta2slte/boot.img
-            /out/lineage/target/product/gta2slte/recovery.img
+            /out/lineage/target/product/gta2slte/lineage-18.1-*.zip.sha256sum
           retention-days: 7
-          if-no-files-found: warn
 
-      - name: Dọn sạch /mnt và /out nếu build lỗi hoặc dừng timeout để nén CCache
-        if: failure()
-        run: |
-          export CCACHE_DIR=/var/tmp/ccache
-          command -v ccache >/dev/null 2>&1 && ccache -s || true
-          rm -rf /mnt/lineage /out/lineage 2>/dev/null || true
-          df -h / /mnt
-
-      - name: Lưu lại CCache bất chấp build thành công hay thất bại
+      - name: Lưu lại CCache bất chấp build thành công hay dừng sớm
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: /var/tmp/ccache
+          path: /mnt/ccache
           key: ccache-gta2slte-${{ github.run_id }}
