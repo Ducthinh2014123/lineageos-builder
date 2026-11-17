@@ -174,7 +174,6 @@ jobs:
 
           (
             CLEANED_STAGE1=0
-            CLEANED_STAGE2=0
             while true; do
               sleep 10
               AVAIL_ROOT=$(df -BG / | awk 'NR==2 {gsub("G",""); print $4}')
@@ -182,18 +181,10 @@ jobs:
               echo "[DISK WATCH] Trống trên / (out): ${AVAIL_ROOT}GB | Trống trên /mnt (src): ${AVAIL_MNT}GB"
 
               if [ "$AVAIL_ROOT" -lt 15 ] && [ "$CLEANED_STAGE1" -eq 0 ]; then
-                echo "[AUTO CLEAN 1] Ổ / dưới 15GB — xóa symbols và file unstripped để lấy 15GB+ trống..."
+                echo "[AUTO CLEAN] Ổ / dưới 15GB — chỉ xóa symbols và file unstripped (giữ nguyên toàn bộ file .o)..."
                 rm -rf /out/lineage/target/product/gta2slte/symbols 2>/dev/null || true
                 find /out/lineage/soong/.intermediates -type d -name "unstripped" -exec rm -rf {} + 2>/dev/null || true
                 CLEANED_STAGE1=1
-                df -h /
-              fi
-
-              if [ "$AVAIL_ROOT" -lt 8 ] && [ "$CLEANED_STAGE2" -eq 0 ]; then
-                echo "[AUTO CLEAN 2] Ổ / dưới 8GB — xóa thêm file đối tượng tĩnh (.a/.o) trong obj..."
-                find /out/lineage/target/product/gta2slte/obj/STATIC_LIBRARIES -name "*.o" -delete 2>/dev/null || true
-                find /out/lineage/target/product/gta2slte/obj/SHARED_LIBRARIES -name "*.o" -delete 2>/dev/null || true
-                CLEANED_STAGE2=1
                 df -h /
               fi
 
