@@ -19,7 +19,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 315
+    timeout-minutes: 360
 
     steps:
       - name: Dọn dẹp sâu ổ / (~60GB trống) và cấu hình 4GB Swap trên /mnt
@@ -99,7 +99,6 @@ jobs:
           repo init -u https://github.com/LineageOS/android.git -b lineage-18.1 --depth=1 --git-lfs
           mkdir -p .repo/local_manifests
 
-          # Manifest chuẩn của gta2slte (đã test sync thành công 100%)
           cat << 'EOF' > .repo/local_manifests/gta2slte.xml
           <?xml version="1.0" encoding="UTF-8"?>
           <manifest>
@@ -111,7 +110,6 @@ jobs:
           </manifest>
           EOF
 
-          # Chặn các toolchain đa nền tảng không dùng tới để tiết kiệm dung lượng & thời gian sync
           python3 -c '
           import glob, xml.etree.ElementTree as ET
           skip_paths = (
@@ -150,7 +148,6 @@ jobs:
             exit 1
           fi
 
-          # Xóa thư mục .repo sau khi sync để giải phóng thêm ~12GB
           rm -rf .repo /mnt/repo-sync.log
           df -h / /mnt
 
@@ -201,13 +198,16 @@ jobs:
           WATCH_PID=$!
 
           set +e
-          source build/envsetup.sh
-          lunch lineage_gta2slte-userdebug
-          mka ${{ github.event.inputs.build_target }}
+          timeout 315m bash -c "source build/envsetup.sh && lunch lineage_gta2slte-userdebug && mka ${{ github.event.inputs.build_target }}"
           BUILD_STATUS=$?
           set -e
 
           kill $WATCH_PID 2>/dev/null || true
+
+          if [ $BUILD_STATUS -eq 124 ]; then
+            echo "Đã chạm mốc 315 phút — chủ động dừng biên dịch để dọn out/ và lưu CCache!"
+            exit 1
+          fi
           exit $BUILD_STATUS
 
       - name: Đóng gói & Upload lên GitHub Releases
@@ -237,8 +237,8 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-      - name: Dọn sạch /mnt và /out nếu build lỗi để nén CCache
-        if: failure()
+      - name: Dọn sạch /mnt và /out sau khi upload để nén CCache không bị đầy đĩa
+        if: always()
         run: |
           export CCACHE_DIR=/var/tmp/ccache
           command -v ccache >/dev/null 2>&1 && ccache -s || true
