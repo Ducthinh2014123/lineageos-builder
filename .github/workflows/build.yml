@@ -139,7 +139,6 @@ jobs:
               "prebuilts/python/darwin",
               "prebuilts/qemu-kernel",
               "prebuilts/android-emulator",
-              "prebuilts/maven_repo",
               "prebuilts/gradle-plugin",
           )
           names = set()
@@ -173,6 +172,10 @@ jobs:
             echo "ERROR: Missing clang-3289846/bin/llvm-as required by RenderScript"
             exit 1
           }
+          if [ ! -f prebuilts/maven_repo/bumptech/com/github/bumptech/glide/glide/SNAPSHOT/glide-SNAPSHOT.jar ]; then
+            echo "ERROR: Missing Glide Maven dependency after repo sync"
+            exit 1
+          fi
           df -h / /mnt
 
       - name: Biên dịch ROM (Source trên /mnt, Out trên /)
