@@ -173,23 +173,22 @@ jobs:
           ccache -z
 
           (
-            CLEANED_STAGE1=0
+            CLEANED_SYMBOLS=0
             while true; do
-              sleep 10
+              sleep 15
               AVAIL_ROOT=$(df -BG / | awk 'NR==2 {gsub("G",""); print $4}')
               AVAIL_MNT=$(df -BG /mnt | awk 'NR==2 {gsub("G",""); print $4}')
               echo "[DISK WATCH] Trống trên / (out): ${AVAIL_ROOT}GB | Trống trên /mnt (src): ${AVAIL_MNT}GB"
 
-              if [ "$AVAIL_ROOT" -lt 15 ] && [ "$CLEANED_STAGE1" -eq 0 ]; then
-                echo "[AUTO CLEAN] Ổ / dưới 15GB — chỉ xóa symbols và file unstripped (giữ nguyên toàn bộ file .o)..."
+              if [ "$AVAIL_ROOT" -lt 12 ] && [ "$CLEANED_SYMBOLS" -eq 0 ]; then
+                echo "[AUTO CLEAN] Ổ / dưới 12GB — chỉ xóa thư mục debug symbols..."
                 rm -rf /out/lineage/target/product/gta2slte/symbols 2>/dev/null || true
-                find /out/lineage/soong/.intermediates -type d -name "unstripped" -exec rm -rf {} + 2>/dev/null || true
-                CLEANED_STAGE1=1
+                CLEANED_SYMBOLS=1
                 df -h /
               fi
 
               if [ "$AVAIL_ROOT" -lt 2 ] || [ "$AVAIL_MNT" -lt 2 ]; then
-                echo "[CẢNH BÁO] Dung lượng trống chạm đáy dưới 2GB — dừng ninja để bảo toàn CCache!"
+                echo "[CẢNH BÁO] Dung lượng trống dưới 2GB — dừng ninja!"
                 pkill -f ninja || true
                 break
               fi
