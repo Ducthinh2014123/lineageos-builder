@@ -168,9 +168,11 @@ jobs:
 
           rm -rf .repo /mnt/repo-sync.log
           find /mnt/lineage -name ".git" -type d -exec rm -rf {} + 2>/dev/null || true
-          rm -rf /mnt/lineage/prebuilts/clang/host/linux-x86/clang-3289846 \
-                 /mnt/lineage/prebuilts/clang/host/linux-x86/clang-r353983c* \
-                 /mnt/lineage/prebuilts/clang/host/linux-x86/clang-r377782* 2>/dev/null || true
+          # Giữ nguyên các toolchain Clang: RenderScript cần clang-3289846/bin/llvm-as.
+          test -x prebuilts/clang/host/linux-x86/clang-3289846/bin/llvm-as || {
+            echo "ERROR: Missing clang-3289846/bin/llvm-as required by RenderScript"
+            exit 1
+          }
           df -h / /mnt
 
       - name: Biên dịch ROM (Source trên /mnt, Out trên /)
@@ -201,11 +203,7 @@ jobs:
               echo "[DISK WATCH] Dung lượng trống hiện tại: ${AVAIL_ROOT}GB"
 
               if [ "$AVAIL_ROOT" -lt 12 ]; then
-                echo "[AUTO CLEAN] Ổ dưới 12GB — xóa ruột debug symbols (giữ nguyên CCache)..."
-                find /out/lineage/target/product/gta2slte/symbols -type f -delete 2>/dev/null || true
-                if [ -f /out/lineage/target/product/gta2slte/boot.img ]; then
-                  find /out/lineage/target/product/gta2slte/obj/KERNEL_OBJ -name "*.o" -delete 2>/dev/null || true
-                fi
+                echo "[DISK WATCH] Cảnh báo: dưới 12GB; không xóa artifact khi Ninja đang chạy."
               fi
 
               if [ "$AVAIL_ROOT" -lt 2 ]; then
