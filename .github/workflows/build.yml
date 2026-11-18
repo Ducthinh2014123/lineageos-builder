@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Dọn dẹp tối đa ổ đĩa (~75GB+ trống) và cấu hình 1GB Swap
+      - name: Dọn dẹp tối đa ổ đĩa (~80GB+ trống) và cấu hình 1GB Swap
         run: |
           echo "=== Dung lượng trước khi dọn ==="
           df -h / /mnt
@@ -38,21 +38,30 @@ jobs:
                        /usr/local/share/powershell \
                        /usr/local/share/chromium \
                        /usr/local/share/vcpkg \
+                       /usr/local/share/phantomjs* \
+                       /usr/local/lib/node_modules \
                        /usr/share/miniconda \
                        /usr/share/gradle* \
                        /usr/share/maven* \
+                       /usr/share/sbt \
                        /usr/local/aws* \
                        /usr/local/sqlpackage \
                        /opt/az \
                        /opt/containerd \
                        /var/lib/docker \
+                       /var/lib/containerd \
                        /usr/lib/firefox \
                        /opt/google/chrome \
                        /usr/local/.ghcup \
                        /usr/share/swift \
                        /usr/local/julia* \
+                       /usr/lib/jvm/temurin-* \
+                       /usr/lib/jvm/adoptopenjdk-* \
+                       /usr/lib/jvm/java-17* \
+                       /usr/lib/jvm/java-21* \
                        /usr/share/doc/* \
-                       /usr/share/man/* 2>/dev/null || true
+                       /usr/share/man/* \
+                       /var/log/* 2>/dev/null || true
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/* /var/cache/* /tmp/*
 
@@ -125,10 +134,13 @@ jobs:
               "prebuilts/gcc/darwin",
               "prebuilts/gcc/linux-x86/mips",
               "prebuilts/gcc/linux-x86/x86",
+              "prebuilts/gdb/darwin",
               "prebuilts/go/darwin",
               "prebuilts/python/darwin",
               "prebuilts/qemu-kernel",
               "prebuilts/android-emulator",
+              "prebuilts/maven_repo",
+              "prebuilts/gradle-plugin",
           )
           names = set()
           for f in glob.glob(".repo/manifests/**/*.xml", recursive=True):
@@ -156,6 +168,9 @@ jobs:
 
           rm -rf .repo /mnt/repo-sync.log
           find /mnt/lineage -name ".git" -type d -exec rm -rf {} + 2>/dev/null || true
+          rm -rf /mnt/lineage/prebuilts/clang/host/linux-x86/clang-3289846 \
+                 /mnt/lineage/prebuilts/clang/host/linux-x86/clang-r353983c* \
+                 /mnt/lineage/prebuilts/clang/host/linux-x86/clang-r377782* 2>/dev/null || true
           df -h / /mnt
 
       - name: Biên dịch ROM (Source trên /mnt, Out trên /)
@@ -185,9 +200,12 @@ jobs:
               AVAIL_ROOT=$(df -BG / | awk 'NR==2 {gsub("G",""); print $4}')
               echo "[DISK WATCH] Dung lượng trống hiện tại: ${AVAIL_ROOT}GB"
 
-              if [ "$AVAIL_ROOT" -lt 10 ]; then
-                echo "[AUTO CLEAN] Ổ dưới 10GB — xóa ruột debug symbols (giữ nguyên CCache)..."
+              if [ "$AVAIL_ROOT" -lt 12 ]; then
+                echo "[AUTO CLEAN] Ổ dưới 12GB — xóa ruột debug symbols (giữ nguyên CCache)..."
                 find /out/lineage/target/product/gta2slte/symbols -type f -delete 2>/dev/null || true
+                if [ -f /out/lineage/target/product/gta2slte/boot.img ]; then
+                  find /out/lineage/target/product/gta2slte/obj/KERNEL_OBJ -name "*.o" -delete 2>/dev/null || true
+                fi
               fi
 
               if [ "$AVAIL_ROOT" -lt 2 ]; then
@@ -200,7 +218,7 @@ jobs:
           WATCH_PID=$!
 
           set +e
-          timeout 315m bash -c "source build/envsetup.sh && lunch lineage_gta2slte-userdebug && mka -j2 ${{ github.event.inputs.build_target }}"
+          timeout 315m bash -c "source build/envsetup.sh && lunch lineage_gta2slte-userdebug && make -j2 ${{ github.event.inputs.build_target }}"
           BUILD_STATUS=$?
           set -e
 
