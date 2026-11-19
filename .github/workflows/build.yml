@@ -106,6 +106,33 @@ jobs:
           df -hT /
           free -h
 
+      - name: Wipe /mnt contents before source sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== /mnt BEFORE ==='
+          df -hT / /mnt
+          ls -la /mnt
+
+          # Never erase mounted volumes or an active swapfile.
+          if findmnt -rn -o TARGET | awk '$1 ~ /^\/mnt\// {found=1} END {exit !found}'; then
+            echo '::error::A filesystem is mounted below /mnt; refusing blanket wipe'
+            findmnt -R /mnt || true
+            exit 1
+          fi
+          if swapon --noheadings --show=NAME | grep -Eq '^/mnt(/|$)'; then
+            echo '::error::Active swap exists in /mnt; refusing blanket wipe'
+            swapon --show
+            exit 1
+          fi
+
+          # Requested full wipe of /mnt children (not /mnt itself).
+          sudo rm -rf -- /mnt/*
+
+          echo '=== /mnt AFTER ==='
+          df -hT / /mnt
+          ls -la /mnt
+
       - name: Prepare directories
         run: |
           set -euo pipefail
@@ -246,6 +273,38 @@ jobs:
           done
           df -hT / /mnt /out
           du -sh /mnt/lineage /var/tmp/ccache || true
+
+      - name: Fix optional AOSP reference RIL dependency
+        working-directory: /mnt/lineage
+        run: |
+          set -euo pipefail
+          reference_mk=hardware/ril/reference-ril/Android.mk
+          if [ ! -f "$reference_mk" ]; then
+            echo 'No AOSP reference RIL Android.mk; nothing to adjust.'
+            exit 0
+          fi
+
+          # The reference implementation is not the device/vendor RIL.
+          # Do not suppress it if the device explicitly requests the module.
+          if grep -RIl --include='*.mk' --include='*.bp' \
+               --include='*.xml' -E 'libreference-ril|reference-ril' \
+               device/samsung/gta2slte vendor/samsung/gta2slte \
+               device/samsung 2>/dev/null | grep -v '^hardware/ril/reference-ril/' \
+               | tee /mnt/build-logs/reference-ril-consumers.txt | grep -q .; then
+            echo '::error::Device/vendor explicitly references AOSP reference RIL; cannot safely disable it.'
+            cat /mnt/build-logs/reference-ril-consumers.txt
+            exit 1
+          fi
+
+          # If libril is absent, the standalone AOSP sample cannot link.
+          # Disable only its build declaration, leaving all device/vendor RIL intact.
+          if ! grep -Rql --include='Android.mk' --include='Android.bp' -E 'LOCAL_MODULE[[:space:]]*:=[[:space:]]*libril([[:space:]]|$)|name:[[:space:]]*"libril"' \
+               hardware/ril 2>/dev/null; then
+            echo 'AOSP libril module not found; excluding unused libreference-ril sample.'
+            mv "$reference_mk" "${reference_mk}.disabled"
+          else
+            echo 'libril definition found; preserving reference-ril Android.mk.'
+          fi
 
       - name: Build LineageOS with full nproc and disk watchdog
         working-directory: /mnt/lineage
