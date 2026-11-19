@@ -1,12 +1,13 @@
+
 name: Build LineageOS 18.1 (gta2slte)
 
 on:
   workflow_dispatch:
     inputs:
       build_target:
-        description: 'Mục tiêu build (mặc định: bacon)'
+        description: "Build target"
         required: true
-        default: 'bacon'
+        default: "bacon"
         type: choice
         options:
           - bacon
@@ -21,82 +22,152 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
 
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      SOURCE_DIR: /mnt/lineage
+      OUT_DIR: /out/lineage
+      CCACHE_DIR: /var/tmp/ccache
+      USE_CCACHE: "1"
+      CCACHE_COMPRESS: "1"
+      CCACHE_EXEC: /usr/bin/ccache
+      CCACHE_BASEDIR: /mnt/lineage
+      ALLOW_MISSING_DEPENDENCIES: "false"
+      WITH_DEXPREOPT_BOOT_IMG_AND_SYSTEM_SERVER_ONLY: "true"
+      GOMAXPROCS: "2"
+      LC_ALL: C
+
     steps:
-      - name: Dọn dẹp tối đa ổ đĩa (~80GB+ trống) và cấu hình 1GB Swap
+      - name: Free disk space
         run: |
-          echo "=== Dung lượng trước khi dọn ==="
+          set -euo pipefail
+
+          echo "=== Before cleanup ==="
           df -h / /mnt
 
           sudo swapoff -a || true
-          sudo systemctl stop docker docker.socket containerd 2>/dev/null || true
-          sudo rm -rf /mnt/* /mnt/.[!.]* /mnt/..?* 2>/dev/null || true
-          sudo rm -rf /usr/share/dotnet \
-                       /usr/local/lib/android \
-                       /opt/ghc \
-                       /opt/hostedtoolcache \
-                       /usr/local/share/boost \
-                       /usr/local/share/powershell \
-                       /usr/local/share/chromium \
-                       /usr/local/share/vcpkg \
-                       /usr/local/share/phantomjs* \
-                       /usr/local/lib/node_modules \
-                       /usr/share/miniconda \
-                       /usr/share/gradle* \
-                       /usr/share/maven* \
-                       /usr/share/sbt \
-                       /usr/local/aws* \
-                       /usr/local/sqlpackage \
-                       /opt/az \
-                       /opt/containerd \
-                       /var/lib/docker \
-                       /var/lib/containerd \
-                       /usr/lib/firefox \
-                       /opt/google/chrome \
-                       /usr/local/.ghcup \
-                       /usr/share/swift \
-                       /usr/local/julia* \
-                       /usr/lib/jvm/temurin-* \
-                       /usr/lib/jvm/adoptopenjdk-* \
-                       /usr/lib/jvm/java-17* \
-                       /usr/lib/jvm/java-21* \
-                       /usr/share/doc/* \
-                       /usr/share/man/* \
-                       /var/log/* 2>/dev/null || true
+
+          sudo systemctl stop \
+            docker docker.socket containerd \
+            2>/dev/null || true
+
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /opt/hostedtoolcache \
+            /usr/local/share/boost \
+            /usr/local/share/powershell \
+            /usr/local/share/chromium \
+            /usr/local/share/vcpkg \
+            /usr/share/miniconda \
+            /usr/share/gradle \
+            /usr/share/maven \
+            /usr/share/sbt \
+            /opt/az \
+            /var/lib/docker \
+            /var/lib/containerd \
+            /usr/share/swift \
+            /usr/local/julia* \
+            2>/dev/null || true
+
           sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/* /var/cache/* /tmp/*
 
-          sudo fallocate -l 1G /mnt/swapfile
-          sudo chmod 600 /mnt/swapfile
-          sudo mkswap /mnt/swapfile
-          sudo swapon /mnt/swapfile
+          sudo mkdir -p \
+            /mnt/lineage \
+            /out/lineage \
+            /var/tmp/ccache
 
-          sudo mkdir -p /mnt/lineage /var/tmp/ccache /out/lineage
-          sudo chown -R $USER:$USER /mnt /var/tmp/ccache /out
+          sudo chown -R \
+            "$USER:$USER" \
+            /mnt/lineage \
+            /out \
+            /var/tmp/ccache
 
-          echo "=== Dung lượng sau khi dọn ==="
+          echo "=== After cleanup ==="
           df -h / /mnt
+
+      - name: Configure swap
+        run: |
+          set -euo pipefail
+
+          sudo fallocate -l 2G /mnt/lineage-swapfile
+          sudo chmod 600 /mnt/lineage-swapfile
+          sudo mkswap /mnt/lineage-swapfile
+          sudo swapon /mnt/lineage-swapfile
+
           free -h
 
-      - name: Cài đặt công cụ biên dịch & Repo
+      - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            bc bison build-essential ccache curl flex fontconfig g++-multilib gcc-multilib \
-            git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev \
-            lib32z1-dev libfreetype6 liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
-            libssl-dev libxml2 libxml2-utils lzop p7zip-full pngcrush python3 python3-protobuf \
-            python-is-python3 rsync schedtool squashfs-tools tar unzip xsltproc xz-utils zip \
-            zlib1g-dev ca-certificates wget
-          sudo ln -sf /usr/lib/x86_64-linux-gnu/libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5 || true
-          sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
-          sudo rm -rf /var/lib/apt/lists/* /tmp/*
-          mkdir -p ~/bin
-          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod a+x ~/bin/repo
-          echo "$HOME/bin" >> $GITHUB_PATH
+          set -euo pipefail
 
-      - name: Khôi phục CCache
-        id: ccache
+          sudo apt-get update
+
+          sudo DEBIAN_FRONTEND=noninteractive \
+            apt-get install -y --no-install-recommends \
+            bc \
+            bison \
+            build-essential \
+            ccache \
+            curl \
+            flex \
+            fontconfig \
+            g++-multilib \
+            gcc-multilib \
+            git \
+            git-lfs \
+            gnupg \
+            gperf \
+            imagemagick \
+            lib32ncurses5-dev \
+            lib32readline-dev \
+            lib32z1-dev \
+            libfreetype6 \
+            liblz4-tool \
+            libncurses5 \
+            libncurses5-dev \
+            libsdl1.2-dev \
+            libssl-dev \
+            libxml2 \
+            libxml2-utils \
+            lzop \
+            p7zip-full \
+            pngcrush \
+            python3 \
+            python3-protobuf \
+            python-is-python3 \
+            rsync \
+            schedtool \
+            squashfs-tools \
+            tar \
+            unzip \
+            xsltproc \
+            xz-utils \
+            zip \
+            zlib1g-dev \
+            ca-certificates \
+            wget \
+            openjdk-11-jdk
+
+          sudo apt-get clean
+
+          mkdir -p "$HOME/bin"
+
+          curl -fL --retry 3 \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$HOME/bin/repo"
+
+          chmod +x "$HOME/bin/repo"
+
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+          java -version
+          python3 --version
+
+      - name: Restore CCache
         uses: actions/cache/restore@v4
         with:
           path: /var/tmp/ccache
@@ -104,29 +175,71 @@ jobs:
           restore-keys: |
             ccache-gta2slte-
 
-      - name: Đồng bộ mã nguồn LineageOS 18.1 & Device Tree (gta2slte)
+      - name: Initialize LineageOS source
         working-directory: /mnt/lineage
         run: |
-          git config --global user.email "Ducthinh2014123@users.noreply.github.com"
-          git config --global user.name "Ducthinh2014123"
+          set -euo pipefail
+
+          git config --global \
+            user.email \
+            "Ducthinh2014123@users.noreply.github.com"
+
+          git config --global \
+            user.name \
+            "Ducthinh2014123"
+
           git config --global color.ui false
 
-          repo init -u https://github.com/LineageOS/android.git -b lineage-18.1 --depth=1 --git-lfs
+          repo init \
+            -u https://github.com/LineageOS/android.git \
+            -b lineage-18.1 \
+            --depth=1 \
+            --git-lfs
+
           mkdir -p .repo/local_manifests
 
-          cat << 'EOF' > .repo/local_manifests/gta2slte.xml
+          cat > .repo/local_manifests/gta2slte.xml <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <manifest>
-            <project name="Ducthinh2014123/android_device_samsung_gta2slte" path="device/samsung/gta2slte" remote="github" revision="lineage-18.1" />
-            <project name="Ducthinh2014123/proprietary_vendor_samsung_gta2slte" path="vendor/samsung/gta2slte" remote="github" revision="lineage-18.1" />
-            <project name="Ducthinh2014123/android_kernel_samsung_msm8937" path="kernel/samsung/msm8937" remote="github" revision="lineage-18.1" />
-            <project name="LineageOS/android_hardware_samsung" path="hardware/samsung" remote="github" revision="lineage-18.1" />
-            <project name="LineageOS/android_hardware_sony_timekeep" path="hardware/sony/timekeep" remote="github" revision="lineage-18.1" />
+            <project
+              name="Ducthinh2014123/android_device_samsung_gta2slte"
+              path="device/samsung/gta2slte"
+              remote="github"
+              revision="lineage-18.1" />
+            <project
+              name="Ducthinh2014123/proprietary_vendor_samsung_gta2slte"
+              path="vendor/samsung/gta2slte"
+              remote="github"
+              revision="lineage-18.1" />
+            <project
+              name="Ducthinh2014123/android_kernel_samsung_msm8937"
+              path="kernel/samsung/msm8937"
+              remote="github"
+              revision="lineage-18.1" />
+            <project
+              name="LineageOS/android_hardware_samsung"
+              path="hardware/samsung"
+              remote="github"
+              revision="lineage-18.1" />
+            <project
+              name="LineageOS/android_hardware_sony_timekeep"
+              path="hardware/sony/timekeep"
+              remote="github"
+              revision="lineage-18.1" />
           </manifest>
           EOF
 
-          python3 -c '
-          import glob, xml.etree.ElementTree as ET
+          echo "Source initialized."
+
+      - name: Configure manifest exclusions
+        working-directory: /mnt/lineage
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import glob
+          import xml.etree.ElementTree as ET
+
           skip_paths = (
               "developers/",
               "prebuilts/build-tools/darwin",
@@ -139,99 +252,239 @@ jobs:
               "prebuilts/python/darwin",
               "prebuilts/qemu-kernel",
               "prebuilts/android-emulator",
-              "prebuilts/gradle-plugin",
           )
+
           names = set()
-          for f in glob.glob(".repo/manifests/**/*.xml", recursive=True):
+
+          for filename in glob.glob(
+              ".repo/manifests/**/*.xml",
+              recursive=True
+          ):
               try:
-                  for p in ET.parse(f).getroot().findall(".//project"):
-                      path = p.get("path", "")
-                      name = p.get("name", "")
+                  root = ET.parse(filename).getroot()
+
+                  for project in root.findall(".//project"):
+                      path = project.get("path", "")
+                      name = project.get("name", "")
+
                       if name and path.startswith(skip_paths):
                           names.add(name)
-              except Exception:
-                  pass
-          with open(".repo/local_manifests/remove.xml", "w") as out:
-              out.write("<manifest>\n")
-              for n in sorted(names):
-                  out.write(f"  <remove-project name=\"{n}\" />\n")
-              out.write("</manifest>\n")
-          print(f"Đã chặn {len(names)} project toolchain thừa.")
-          '
 
-          if ! repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle --optimized-fetch --prune --fail-fast --quiet > /mnt/repo-sync.log 2>&1; then
-            echo "repo sync thất bại, hiển thị 200 dòng cuối của log:"
-            tail -n 200 /mnt/repo-sync.log || true
+              except ET.ParseError:
+                  continue
+
+          output = ".repo/local_manifests/remove.xml"
+
+          with open(output, "w") as file:
+              file.write("<manifest>\n")
+
+              for name in sorted(names):
+                  file.write(
+                      f'  <remove-project name="{name}" />\n'
+                  )
+
+              file.write("</manifest>\n")
+
+          print(f"Excluded projects: {len(names)}")
+          print("Gradle plugin prebuilts preserved.")
+          PY
+
+      - name: Sync LineageOS source
+        working-directory: /mnt/lineage
+        run: |
+          set -euo pipefail
+
+          echo "=== Syncing source ==="
+
+          if ! repo sync \
+            -c \
+            -j4 \
+            --force-sync \
+            --no-tags \
+            --no-clone-bundle \
+            --optimized-fetch \
+            --prune \
+            --fail-fast \
+            > /mnt/repo-sync.log 2>&1; then
+
+            echo "::error::Repository sync failed"
+            tail -n 200 /mnt/repo-sync.log
             exit 1
           fi
 
-          rm -rf .repo /mnt/repo-sync.log
-          find /mnt/lineage -name ".git" -type d -exec rm -rf {} + 2>/dev/null || true
-          # Giữ nguyên các toolchain Clang: RenderScript cần clang-3289846/bin/llvm-as.
-          test -x prebuilts/clang/host/linux-x86/clang-3289846/bin/llvm-as || {
-            echo "ERROR: Missing clang-3289846/bin/llvm-as required by RenderScript"
-            exit 1
-          }
-          if [ ! -f prebuilts/maven_repo/bumptech/com/github/bumptech/glide/glide/SNAPSHOT/glide-SNAPSHOT.jar ]; then
-            echo "ERROR: Missing Glide Maven dependency after repo sync"
-            exit 1
-          fi
+          echo "=== Sync completed ==="
+
           df -h / /mnt
 
-      - name: Biên dịch ROM (Source trên /mnt, Out trên /)
+      - name: Validate critical dependencies
+        working-directory: /mnt/lineage
+        run: |
+          set -euo pipefail
+
+          echo "=== Clang / RenderScript ==="
+
+          LLVM_AS=prebuilts/clang/host/linux-x86/clang-3289846/bin/llvm-as
+
+          if [ ! -x "$LLVM_AS" ]; then
+            echo "::error::Missing RenderScript llvm-as"
+            exit 1
+          fi
+
+          echo "RenderScript LLVM: OK"
+
+          echo "=== Glide Maven dependency ==="
+
+          GLIDE_JAR=prebuilts/maven_repo/bumptech/com/github/bumptech/glide/glide/SNAPSHOT/glide-SNAPSHOT.jar
+
+          if [ ! -f "$GLIDE_JAR" ]; then
+            echo "::error::Missing Glide Maven dependency"
+            exit 1
+          fi
+
+          echo "Glide Maven: OK"
+
+          echo "=== Gradle plugin prebuilts ==="
+
+          if [ ! -d prebuilts/gradle-plugin ]; then
+            echo "::error::Missing prebuilts/gradle-plugin"
+            exit 1
+          fi
+
+          echo "Gradle plugin prebuilts: OK"
+
+          echo "=== Metalava ==="
+
+          if [ ! -d tools/metalava ]; then
+            echo "::error::Missing tools/metalava"
+            exit 1
+          fi
+
+          if [ ! -f tools/metalava/Android.bp ]; then
+            echo "::error::Missing Metalava Android.bp"
+            exit 1
+          fi
+
+          echo "=== Metalava dependency references ==="
+
+          grep -R -n -m 5 \
+            "metalava-gradle-plugin-deps" \
+            tools/metalava \
+            prebuilts/gradle-plugin \
+            | head -30 || true
+
+          echo "Critical dependency checks completed."
+
+      - name: Configure CCache
+        run: |
+          set -euo pipefail
+
+          ccache -M 4G
+          ccache -z
+          ccache -s
+
+      - name: Build ROM
         working-directory: /mnt/lineage
         env:
-          ALLOW_MISSING_DEPENDENCIES: true
-          WITH_DEXPREOPT_BOOT_IMG_AND_SYSTEM_SERVER_ONLY: true
-          STRIP_EVERYTHING: true
-          GOMAXPROCS: 2
-          USE_CCACHE: 1
-          CCACHE_COMPRESS: 1
-          CCACHE_EXEC: /usr/bin/ccache
-          CCACHE_DIR: /var/tmp/ccache
-          CCACHE_BASEDIR: /mnt/lineage
           OUT_DIR_COMMON_BASE: /out
           _JAVA_OPTIONS: "-Xmx3g"
-          LC_ALL: C
+          BUILD_TARGET: ${{ inputs.build_target }}
         run: |
+          set -euo pipefail
+
+          echo "=== Build configuration ==="
+          echo "Target: $BUILD_TARGET"
+
+          ulimit -n 65535 || true
+
           rm -rf hardware/ril/reference-ril
-          ulimit -n 65535
-          ccache -M 9G
-          ccache -z
+
+          echo "=== Disk before build ==="
+          df -h / /mnt
+
+          mkdir -p /mnt/build-logs
 
           (
             while true; do
-              sleep 15
-              AVAIL_ROOT=$(df -BG / | awk 'NR==2 {gsub("G",""); print $4}')
-              echo "[DISK WATCH] Dung lượng trống hiện tại: ${AVAIL_ROOT}GB"
+              sleep 30
 
-              if [ "$AVAIL_ROOT" -lt 12 ]; then
-                echo "[DISK WATCH] Cảnh báo: dưới 12GB; không xóa artifact khi Ninja đang chạy."
+              ROOT_FREE=$(df -Pk / | awk 'NR==2 {print $4}')
+              MNT_FREE=$(df -Pk /mnt | awk 'NR==2 {print $4}')
+
+              echo "[DISK WATCH] root=${ROOT_FREE}KB mnt=${MNT_FREE}KB"
+
+              if [ "$ROOT_FREE" -lt 12582912 ]; then
+                echo "::warning::Root disk below 12 GiB"
               fi
 
-              if [ "$AVAIL_ROOT" -lt 2 ]; then
-                echo "[CẢNH BÁO] Dung lượng trống chạm đáy dưới 2GB — dừng ninja để bảo toàn CCache!"
-                pkill -f ninja || true
-                break
+              if [ "$MNT_FREE" -lt 5242880 ]; then
+                echo "::warning::Mount disk below 5 GiB"
+              fi
+
+              if [ "$ROOT_FREE" -lt 2097152 ]; then
+                echo "::error::Root disk critically low"
               fi
             done
           ) &
+
           WATCH_PID=$!
 
+          cleanup_watch() {
+            kill "$WATCH_PID" 2>/dev/null || true
+            wait "$WATCH_PID" 2>/dev/null || true
+          }
+
+          trap cleanup_watch EXIT
+
           set +e
-          timeout 315m bash -c "source build/envsetup.sh && lunch lineage_gta2slte-userdebug && make -j2 ${{ github.event.inputs.build_target }}"
-          BUILD_STATUS=$?
+
+          timeout 315m bash -c '
+            set -o pipefail
+
+            source build/envsetup.sh
+
+            lunch lineage_gta2slte-userdebug
+
+            make -j2 "$BUILD_TARGET"
+          ' 2>&1 | tee /mnt/build-logs/build.log
+
+          BUILD_STATUS=${PIPESTATUS[0]}
+
           set -e
 
-          kill $WATCH_PID 2>/dev/null || true
+          echo "=== Build finished ==="
+          echo "Exit code: $BUILD_STATUS"
 
-          if [ $BUILD_STATUS -eq 124 ]; then
-            echo "Đã chạm mốc 315 phút — chủ động dừng biên dịch để dọn out/ và lưu CCache!"
-            exit 1
+          ccache -s || true
+          df -h / /mnt
+
+          if [ "$BUILD_STATUS" -eq 124 ]; then
+            echo "::error::Build exceeded 315 minutes"
+            exit 124
           fi
-          exit $BUILD_STATUS
 
-      - name: Đóng gói & Upload lên GitHub Releases
+          if [ "$BUILD_STATUS" -ne 0 ]; then
+            echo "::error::LineageOS build failed"
+
+            echo "=== Last 150 log lines ==="
+            tail -n 150 /mnt/build-logs/build.log
+
+            exit "$BUILD_STATUS"
+          fi
+
+          echo "Build completed successfully."
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LineageOS-Build-Logs-${{ github.run_number }}
+          path: |
+            /mnt/build-logs/*.log
+            /mnt/repo-sync.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Publish GitHub Release
         if: success()
         continue-on-error: true
         uses: softprops/action-gh-release@v2
@@ -245,7 +498,7 @@ jobs:
             /out/lineage/target/product/gta2slte/boot.img
             /out/lineage/target/product/gta2slte/recovery.img
 
-      - name: Đính kèm file ROM trực tiếp vào Build (Artifacts)
+      - name: Upload ROM artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -258,15 +511,22 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-      - name: Dọn sạch /mnt và /out sau khi upload để nén CCache không bị đầy đĩa
+      - name: Cleanup build source
         if: always()
         run: |
-          export CCACHE_DIR=/var/tmp/ccache
-          command -v ccache >/dev/null 2>&1 && ccache -s || true
-          rm -rf /mnt/lineage /out/lineage 2>/dev/null || true
-          df -h /
+          echo "=== CCache statistics ==="
 
-      - name: Lưu lại CCache bất chấp build thành công hay dừng sớm
+          export CCACHE_DIR=/var/tmp/ccache
+          ccache -s || true
+
+          echo "=== Cleanup ==="
+
+          rm -rf /mnt/lineage /out/lineage || true
+          rm -f /mnt/lineage-swapfile || true
+
+          df -h / /mnt
+
+      - name: Save CCache
         if: always()
         uses: actions/cache/save@v4
         with:
