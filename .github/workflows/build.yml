@@ -39,14 +39,13 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
 
     steps:
-      - name: Minimize GitHub runner and disable swap
+      - name: Minimize GitHub runner (preserve existing swap)
         run: |
           set -euo pipefail
           echo '=== Initial disk ==='
           df -hT / /mnt /var/tmp
           free -h
-          # Disable existing swap and avoid allocating any swapfile.
-          sudo swapoff -a || true
+          # Preserve existing runner swap; do not create any new swapfile.
           sudo systemctl stop docker.service docker.socket containerd.service 2>/dev/null || true
 
           # Purge only explicitly selected optional packages; do not autoremove.
@@ -262,7 +261,7 @@ jobs:
           ulimit -n 65535 || true
           export JOBS="$jobs"
           setsid timeout --signal=TERM --kill-after=15s 315m bash -c '
-            set -euo pipefail
+            set -eo pipefail
             source build/envsetup.sh
             lunch lineage_gta2slte-userdebug
             make -j"$JOBS" "$BUILD_TARGET"
