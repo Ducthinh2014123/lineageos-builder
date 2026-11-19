@@ -1,11 +1,11 @@
 
-name: Build LineageOS 18.1 (gta2slte)
+name: Build LineageOS 18.1 - gta2slte
 
 on:
   workflow_dispatch:
     inputs:
       build_target:
-        description: "Build target"
+        description: Build target
         required: true
         default: bacon
         type: choice
@@ -16,6 +16,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: lineage-gta2slte
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -28,52 +32,67 @@ jobs:
 
     env:
       SOURCE_DIR: /mnt/lineage
-      OUT_DIR: /out/lineage
+      OUT_DIR_COMMON_BASE: /out
       CCACHE_DIR: /var/tmp/ccache
       CCACHE_BASEDIR: /mnt/lineage
-      CCACHE_EXEC: /usr/bin/ccache
       USE_CCACHE: "1"
       CCACHE_COMPRESS: "1"
       ALLOW_MISSING_DEPENDENCIES: "false"
-      WITH_DEXPREOPT_BOOT_IMG_AND_SYSTEM_SERVER_ONLY: "true"
-      GOMAXPROCS: "2"
-      LC_ALL: C
+      BUILD_TARGET: ${{ inputs.build_target }}
+      DEBIAN_FRONTEND: noninteractive
 
     steps:
-      - name: Free disk space and prepare directories
+      # ========================================
+      # 1. MINIMIZE UBUNTU
+      # ========================================
+
+      - name: Minimize Ubuntu runner
         run: |
           set -euo pipefail
 
-          echo "=== Initial disk space ==="
-          df -h / /mnt
-
-          sudo swapoff -a || true
+          echo "=== INITIAL DISK ==="
+          df -hT /
+          free -h
 
           sudo systemctl stop \
-            docker docker.socket containerd \
+            docker.service \
+            docker.socket \
+            containerd.service \
             2>/dev/null || true
 
-          sudo rm -rf \
-            /usr/share/dotnet \
-            /usr/local/lib/android \
-            /opt/ghc \
-            /opt/hostedtoolcache \
-            /usr/local/share/boost \
-            /usr/local/share/powershell \
-            /usr/local/share/chromium \
-            /usr/local/share/vcpkg \
-            /usr/share/miniconda \
-            /usr/share/gradle \
-            /usr/share/maven \
-            /usr/share/sbt \
-            /opt/az \
-            /var/lib/docker \
-            /var/lib/containerd \
-            /usr/share/swift \
-            /usr/local/julia* \
-            2>/dev/null || true
+          REMOVE_DIRS=(
+            /usr/share/dotnet
+            /usr/local/lib/android
+            /opt/ghc
+            /usr/local/share/powershell
+            /usr/local/share/chromium
+            /usr/local/share/vcpkg
+            /usr/share/miniconda
+            /usr/share/swift
+            /opt/az
+            /var/lib/docker
+            /var/lib/containerd
+          )
+
+          for dir in "${REMOVE_DIRS[@]}"; do
+            if [ -e "$dir" ]; then
+              echo "Removing: $dir"
+              sudo rm -rf -- "$dir"
+            fi
+          done
 
           sudo apt-get clean
+
+          echo "=== DISK AFTER CLEANUP ==="
+          df -hT /
+
+      # ========================================
+      # 2. PREPARE DIRECTORIES
+      # ========================================
+
+      - name: Prepare build directories
+        run: |
+          set -euo pipefail
 
           sudo mkdir -p \
             /mnt/lineage \
@@ -88,33 +107,39 @@ jobs:
             /out \
             /var/tmp/ccache
 
-          echo "=== Disk after cleanup ==="
-          df -h / /mnt
+          echo "=== FILESYSTEMS ==="
+          df -hT / /mnt /out /var/tmp
 
-      - name: Configure 2GB swap
-        run: |
-          set -euo pipefail
+          echo "=== CPU ==="
+          nproc
 
-          sudo fallocate -l 2G /mnt/lineage-swapfile
-          sudo chmod 600 /mnt/lineage-swapfile
-          sudo mkswap /mnt/lineage-swapfile
-          sudo swapon /mnt/lineage-swapfile
-
+          echo "=== MEMORY ==="
           free -h
 
-      - name: Install build dependencies
+          echo "=== SWAP ==="
+          swapon --show || true
+
+          echo "No swap file will be created."
+
+      # ========================================
+      # 3. INSTALL BUILD DEPENDENCIES
+      # ========================================
+
+      - name: Install LineageOS dependencies
         run: |
           set -euo pipefail
 
           sudo apt-get update
 
-          sudo DEBIAN_FRONTEND=noninteractive \
-            apt-get install -y --no-install-recommends \
+          sudo apt-get install -y \
+            --no-install-recommends \
             bc \
             bison \
             build-essential \
+            ca-certificates \
             ccache \
             curl \
+            file \
             flex \
             fontconfig \
             g++-multilib \
@@ -124,10 +149,14 @@ jobs:
             gnupg \
             gperf \
             imagemagick \
+            kmod \
             lib32ncurses5-dev \
             lib32readline-dev \
             lib32z1-dev \
+            libdw-dev \
+            libelf-dev \
             libfreetype6 \
+            libgnutls28-dev \
             liblz4-tool \
             libncurses5 \
             libncurses5-dev \
@@ -135,9 +164,12 @@ jobs:
             libssl-dev \
             libxml2 \
             libxml2-utils \
+            lz4 \
             lzop \
+            openjdk-11-jdk-headless \
             p7zip-full \
             pngcrush \
+            protobuf-compiler \
             python3 \
             python3-protobuf \
             python-is-python3 \
@@ -146,15 +178,31 @@ jobs:
             squashfs-tools \
             tar \
             unzip \
+            wget \
+            xxd \
             xsltproc \
             xz-utils \
             zip \
-            zlib1g-dev \
-            ca-certificates \
-            wget \
-            openjdk-11-jdk
+            zlib1g-dev
 
           sudo apt-get clean
+
+          echo "=== TOOL VERSIONS ==="
+          java -version
+          python3 --version
+          git --version
+          ccache --version | head -1
+
+          echo "=== DISK ==="
+          df -hT /
+
+      # ========================================
+      # 4. INSTALL REPO TOOL
+      # ========================================
+
+      - name: Install Android repo tool
+        run: |
+          set -euo pipefail
 
           mkdir -p "$HOME/bin"
 
@@ -166,16 +214,37 @@ jobs:
 
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
-          java -version
-          python3 --version
+          "$HOME/bin/repo" version
+
+      # ========================================
+      # 5. RESTORE CCACHE
+      # ========================================
 
       - name: Restore CCache
         uses: actions/cache/restore@v4
         with:
           path: /var/tmp/ccache
-          key: ccache-gta2slte-${{ github.run_id }}
+          key: ccache-gta2slte-6gb-${{ github.run_id }}
           restore-keys: |
-            ccache-gta2slte-
+            ccache-gta2slte-6gb-
+
+      - name: Configure CCache 6GB
+        run: |
+          set -euo pipefail
+
+          ccache -M 6G
+          ccache -c
+          ccache -z
+          ccache -s
+
+          echo "=== CCACHE USAGE ==="
+          du -sh "$CCACHE_DIR" || true
+
+          df -hT /
+
+      # ========================================
+      # 6. INITIALIZE LINEAGEOS
+      # ========================================
 
       - name: Initialize LineageOS source
         working-directory: /mnt/lineage
@@ -183,12 +252,10 @@ jobs:
           set -euo pipefail
 
           git config --global \
-            user.email \
-            "Ducthinh2014123@users.noreply.github.com"
+            user.name "LineageOS Builder"
 
           git config --global \
-            user.name \
-            "Ducthinh2014123"
+            user.email "builder@users.noreply.github.com"
 
           git config --global color.ui false
 
@@ -203,295 +270,374 @@ jobs:
           cat > .repo/local_manifests/gta2slte.xml <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <manifest>
-            <project name="Ducthinh2014123/android_device_samsung_gta2slte"
-                     path="device/samsung/gta2slte"
-                     remote="github"
-                     revision="lineage-18.1" />
-            <project name="Ducthinh2014123/proprietary_vendor_samsung_gta2slte"
-                     path="vendor/samsung/gta2slte"
-                     remote="github"
-                     revision="lineage-18.1" />
-            <project name="Ducthinh2014123/android_kernel_samsung_msm8937"
-                     path="kernel/samsung/msm8937"
-                     remote="github"
-                     revision="lineage-18.1" />
-            <project name="LineageOS/android_hardware_samsung"
-                     path="hardware/samsung"
-                     remote="github"
-                     revision="lineage-18.1" />
-            <project name="LineageOS/android_hardware_sony_timekeep"
-                     path="hardware/sony/timekeep"
-                     remote="github"
-                     revision="lineage-18.1" />
+            <project
+              name="Ducthinh2014123/android_device_samsung_gta2slte"
+              path="device/samsung/gta2slte"
+              remote="github"
+              revision="lineage-18.1" />
+
+            <project
+              name="Ducthinh2014123/proprietary_vendor_samsung_gta2slte"
+              path="vendor/samsung/gta2slte"
+              remote="github"
+              revision="lineage-18.1" />
+
+            <project
+              name="Ducthinh2014123/android_kernel_samsung_msm8937"
+              path="kernel/samsung/msm8937"
+              remote="github"
+              revision="lineage-18.1" />
+
+            <project
+              name="LineageOS/android_hardware_samsung"
+              path="hardware/samsung"
+              remote="github"
+              revision="lineage-18.1" />
+
+            <project
+              name="LineageOS/android_hardware_sony_timekeep"
+              path="hardware/sony/timekeep"
+              remote="github"
+              revision="lineage-18.1" />
           </manifest>
           EOF
 
-      - name: Configure safe manifest exclusions
-        working-directory: /mnt/lineage
-        run: |
-          set -euo pipefail
+          repo manifest \
+            -o /mnt/build-logs/manifest.xml
 
-          python3 <<'PY'
-          import glob
-          import xml.etree.ElementTree as ET
-
-          skip_paths = (
-              "developers/",
-              "prebuilts/build-tools/darwin",
-              "prebuilts/clang/host/darwin",
-              "prebuilts/gcc/darwin",
-              "prebuilts/gcc/linux-x86/mips",
-              "prebuilts/gcc/linux-x86/x86",
-              "prebuilts/gdb/darwin",
-              "prebuilts/go/darwin",
-              "prebuilts/python/darwin",
-              "prebuilts/qemu-kernel",
-              "prebuilts/android-emulator",
-          )
-
-          names = set()
-
-          for filename in glob.glob(
-              ".repo/manifests/**/*.xml",
-              recursive=True
-          ):
-              try:
-                  root = ET.parse(filename).getroot()
-                  for project in root.findall(".//project"):
-                      path = project.get("path", "")
-                      name = project.get("name", "")
-                      if name and path.startswith(skip_paths):
-                          names.add(name)
-              except ET.ParseError:
-                  continue
-
-          with open(
-              ".repo/local_manifests/remove.xml", "w"
-          ) as output:
-              output.write("<manifest>\n")
-              for name in sorted(names):
-                  output.write(
-                      f'  <remove-project name="{name}" />\n'
-                  )
-              output.write("</manifest>\n")
-
-          print(f"Excluded projects: {len(names)}")
-          print("Gradle plugin prebuilts: PRESERVED")
-          PY
+      # ========================================
+      # 7. SYNC SOURCE
+      # ========================================
 
       - name: Sync LineageOS source
         working-directory: /mnt/lineage
         run: |
           set -euo pipefail
 
-          echo "=== Syncing source ==="
+          echo "=== SYNC START ==="
 
-          mkdir -p /mnt/build-logs
+          setsid bash -c '
+            repo sync \
+              -c \
+              -j2 \
+              --no-tags \
+              --no-clone-bundle \
+              --optimized-fetch \
+              --prune \
+              --fail-fast
+          ' > /mnt/build-logs/repo-sync.log 2>&1 &
 
-          if ! repo sync \
-            -c \
-            -j4 \
-            --force-sync \
-            --no-tags \
-            --no-clone-bundle \
-            --optimized-fetch \
-            --prune \
-            --fail-fast \
-            > /mnt/build-logs/repo-sync.log 2>&1; then
-
-            echo "::error::Repository sync failed"
-            tail -n 200 /mnt/build-logs/repo-sync.log
-            exit 1
-          fi
-
-          echo "=== Sync completed ==="
-          df -h / /mnt
-
-      - name: Validate critical dependencies
-        working-directory: /mnt/lineage
-        run: |
-          set -euo pipefail
-
-          echo "=== RenderScript LLVM ==="
-
-          LLVM_AS=prebuilts/clang/host/linux-x86/clang-3289846/bin/llvm-as
-
-          if [ ! -x "$LLVM_AS" ]; then
-            echo "::error::Missing RenderScript llvm-as"
-            exit 1
-          fi
-
-          echo "=== Glide Maven dependency ==="
-
-          GLIDE_JAR=prebuilts/maven_repo/bumptech/com/github/bumptech/glide/glide/SNAPSHOT/glide-SNAPSHOT.jar
-
-          if [ ! -f "$GLIDE_JAR" ]; then
-            echo "::error::Missing Glide dependency"
-            exit 1
-          fi
-
-          echo "=== Gradle plugin prebuilts ==="
-
-          if [ ! -d prebuilts/gradle-plugin ]; then
-            echo "::error::Missing Gradle plugin prebuilts"
-            exit 1
-          fi
-
-          echo "=== Metalava ==="
-
-          if [ ! -f tools/metalava/Android.bp ]; then
-            echo "::error::Missing Metalava Android.bp"
-            exit 1
-          fi
-
-          echo "=== Metalava Gradle dependency ==="
-
-          grep -R -n -m 5 \
-            "metalava-gradle-plugin-deps" \
-            tools/metalava \
-            prebuilts/gradle-plugin \
-            | head -30 || true
-
-          echo "Critical dependency validation completed."
-
-      - name: Configure CCache
-        run: |
-          set -euo pipefail
-
-          ccache -M 4G
-          ccache -z
-          ccache -s
-
-      - name: Build ROM
-        working-directory: /mnt/lineage
-        env:
-          OUT_DIR_COMMON_BASE: /out
-          _JAVA_OPTIONS: "-Xmx3g"
-          BUILD_TARGET: ${{ inputs.build_target }}
-        run: |
-          set -euo pipefail
-
-          echo "=== Build target: $BUILD_TARGET ==="
-
-          ulimit -n 65535 || true
-
-          rm -rf hardware/ril/reference-ril
-
-          mkdir -p /mnt/build-logs
+          SYNC_PID=$!
 
           (
-            while true; do
-              sleep 30
+            while kill -0 "$SYNC_PID" 2>/dev/null; do
+              sleep 5
 
-              ROOT_FREE=$(df -Pk / | awk 'NR==2 {print $4}')
-              MNT_FREE=$(df -Pk /mnt | awk 'NR==2 {print $4}')
+              FREE_KB=$(df -Pk / | awk 'NR==2 {print $4}')
 
-              echo "[DISK WATCH] root=${ROOT_FREE}KB mnt=${MNT_FREE}KB"
+              echo "[SYNC DISK] ${FREE_KB} KB free"
 
-              if [ "$ROOT_FREE" -lt 12582912 ]; then
-                echo "::warning::Root disk below 12 GiB"
-              fi
+              if [ "$FREE_KB" -lt 716800 ]; then
+                echo "::error::Less than 700 MiB free"
+                touch /mnt/build-logs/sync-disk-critical
 
-              if [ "$MNT_FREE" -lt 5242880 ]; then
-                echo "::warning::Mount disk below 5 GiB"
+                kill -TERM -- "-$SYNC_PID" \
+                  2>/dev/null || true
+
+                sleep 3
+
+                kill -KILL -- "-$SYNC_PID" \
+                  2>/dev/null || true
+
+                break
               fi
             done
           ) &
 
           WATCH_PID=$!
 
-          cleanup_watch() {
-            kill "$WATCH_PID" 2>/dev/null || true
-            wait "$WATCH_PID" 2>/dev/null || true
-          }
-
-          trap cleanup_watch EXIT
-
           set +e
-
-          timeout 315m bash -c '
-            set -o pipefail
-            source build/envsetup.sh
-            lunch lineage_gta2slte-userdebug
-            make -j2 "$BUILD_TARGET"
-          ' 2>&1 | tee /mnt/build-logs/build.log
-
-          BUILD_STATUS=${PIPESTATUS[0]}
-
+          wait "$SYNC_PID"
+          STATUS=$?
           set -e
 
-          echo "=== Build exit code: $BUILD_STATUS ==="
+          kill "$WATCH_PID" 2>/dev/null || true
+          wait "$WATCH_PID" 2>/dev/null || true
 
+          if [ -f /mnt/build-logs/sync-disk-critical ]; then
+            echo "::error::Sync stopped due to low disk"
+            tail -n 100 /mnt/build-logs/repo-sync.log
+            exit 1
+          fi
+
+          if [ "$STATUS" -ne 0 ]; then
+            echo "::error::Repo sync failed"
+            tail -n 200 /mnt/build-logs/repo-sync.log
+            exit "$STATUS"
+          fi
+
+          echo "=== SYNC SUCCESS ==="
+          df -hT /
+
+      # ========================================
+      # 8. VERIFY SOURCE
+      # ========================================
+
+      - name: Verify source
+        working-directory: /mnt/lineage
+        run: |
+          set -euo pipefail
+
+          REQUIRED=(
+            build/envsetup.sh
+            build/soong
+            device/samsung/gta2slte
+            vendor/samsung/gta2slte
+            kernel/samsung/msm8937
+            tools/metalava
+          )
+
+          for item in "${REQUIRED[@]}"; do
+            if [ ! -e "$item" ]; then
+              echo "::error::Missing source: $item"
+              exit 1
+            fi
+          done
+
+          echo "=== SOURCE VERIFIED ==="
+
+          df -hT /
+
+      # ========================================
+      # 9. PRE-BUILD CHECK
+      # ========================================
+
+      - name: Check disk and CPU before build
+        run: |
+          set -euo pipefail
+
+          echo "=== CPU ==="
+          nproc
+
+          echo "=== RAM ==="
+          free -h
+
+          echo "=== DISK ==="
+          df -hT / /mnt /out
+
+          echo "=== SOURCE / CCACHE ==="
+          du -sh \
+            /mnt/lineage \
+            /var/tmp/ccache \
+            2>/dev/null || true
+
+          FREE_KB=$(df -Pk / | awk 'NR==2 {print $4}')
+
+          if [ "$FREE_KB" -lt 716800 ]; then
+            echo "::error::Less than 700 MiB free"
+            exit 1
+          fi
+
+      # ========================================
+      # 10. BUILD WITH FULL NPROC
+      # ========================================
+
+      - name: Build LineageOS with full CPU
+        working-directory: /mnt/lineage
+        run: |
+          set -euo pipefail
+
+          JOBS=$(nproc)
+
+          echo "=== BUILD TARGET ==="
+          echo "$BUILD_TARGET"
+
+          echo "=== BUILD JOBS ==="
+          echo "$JOBS"
+
+          echo "=== MEMORY ==="
+          free -h
+
+          ulimit -n 65535 || true
+
+          export JOBS
+
+          setsid timeout 315m bash -c '
+            set -euo pipefail
+
+            source build/envsetup.sh
+
+            lunch lineage_gta2slte-userdebug
+
+            make -j"$JOBS" "$BUILD_TARGET"
+          ' > /mnt/build-logs/build.log 2>&1 &
+
+          BUILD_PID=$!
+
+          (
+            while kill -0 "$BUILD_PID" 2>/dev/null; do
+              sleep 5
+
+              FREE_KB=$(df -Pk / | awk 'NR==2 {print $4}')
+
+              echo "[BUILD DISK] ${FREE_KB} KB free"
+
+              if [ "$FREE_KB" -lt 716800 ]; then
+                echo "::error::Critical disk: 700 MiB"
+                touch /mnt/build-logs/build-disk-critical
+
+                kill -TERM -- "-$BUILD_PID" \
+                  2>/dev/null || true
+
+                sleep 3
+
+                kill -KILL -- "-$BUILD_PID" \
+                  2>/dev/null || true
+
+                break
+              fi
+            done
+          ) &
+
+          WATCH_PID=$!
+
+          set +e
+          wait "$BUILD_PID"
+          STATUS=$?
+          set -e
+
+          kill "$WATCH_PID" 2>/dev/null || true
+          wait "$WATCH_PID" 2>/dev/null || true
+
+          echo "=== BUILD EXIT CODE ==="
+          echo "$STATUS"
+
+          echo "=== LAST 150 LOG LINES ==="
+          tail -n 150 /mnt/build-logs/build.log || true
+
+          echo "=== CCACHE ==="
           ccache -s || true
-          df -h / /mnt
 
-          if [ "$BUILD_STATUS" -eq 124 ]; then
-            echo "::error::Build exceeded 315 minutes"
+          echo "=== DISK ==="
+          df -hT /
+
+          if [ -f /mnt/build-logs/build-disk-critical ]; then
+            echo "::error::Build terminated: low disk"
+            exit 1
+          fi
+
+          if [ "$STATUS" -eq 124 ]; then
+            echo "::error::Build timeout"
             exit 124
           fi
 
-          if [ "$BUILD_STATUS" -ne 0 ]; then
+          if [ "$STATUS" -ne 0 ]; then
             echo "::error::LineageOS build failed"
-            tail -n 150 /mnt/build-logs/build.log
-            exit "$BUILD_STATUS"
+            exit "$STATUS"
           fi
 
-          echo "Build completed successfully."
+          echo "=== BUILD SUCCESS ==="
 
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: LineageOS-Build-Logs-${{ github.run_number }}
-          path: |
-            /mnt/build-logs/*.log
-          retention-days: 7
-          if-no-files-found: ignore
+      # ========================================
+      # 11. VERIFY OUTPUT
+      # ========================================
 
-      - name: Publish GitHub Release
+      - name: Verify build output
         if: success()
-        continue-on-error: true
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: lineage-18.1-gta2slte-${{ github.run_number }}
-          name: LineageOS 18.1 Unofficial - SM-T385 (${{ github.run_number }})
-          fail_on_unmatched_files: false
-          files: |
-            /out/lineage/target/product/gta2slte/lineage-18.1-*.zip
-            /out/lineage/target/product/gta2slte/lineage-18.1-*.zip.sha256sum
-            /out/lineage/target/product/gta2slte/boot.img
-            /out/lineage/target/product/gta2slte/recovery.img
+        run: |
+          set -euo pipefail
 
-      - name: Upload ROM artifacts
+          PRODUCT_DIR=/out/lineage/target/product/gta2slte
+
+          echo "=== OUTPUT ==="
+          ls -lh "$PRODUCT_DIR"
+
+          case "$BUILD_TARGET" in
+            bacon)
+              compgen -G "$PRODUCT_DIR/lineage-18.1-*.zip" \
+                > /dev/null || {
+                  echo "::error::ROM ZIP missing"
+                  exit 1
+                }
+              ;;
+            systemimage)
+              test -f "$PRODUCT_DIR/system.img"
+              ;;
+            bootimage)
+              test -f "$PRODUCT_DIR/boot.img"
+              ;;
+          esac
+
+          df -hT /
+
+      # ========================================
+      # 12. UPLOAD ARTIFACTS
+      # ========================================
+
+      - name: Upload build artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: LineageOS-18.1-gta2slte-${{ github.run_number }}
           path: |
             /out/lineage/target/product/gta2slte/lineage-18.1-*.zip
-            /out/lineage/target/product/gta2slte/lineage-18.1-*.zip.sha256sum
             /out/lineage/target/product/gta2slte/boot.img
             /out/lineage/target/product/gta2slte/recovery.img
+            /out/lineage/target/product/gta2slte/system.img
+          if-no-files-found: error
           retention-days: 7
-          if-no-files-found: warn
+          compression-level: 0
 
-      - name: Cleanup source and output
+      # ========================================
+      # 13. GITHUB RELEASE
+      # ========================================
+
+      - name: Publish GitHub Release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: lineage-18.1-gta2slte-${{ github.run_number }}
+          name: LineageOS 18.1 gta2slte Build ${{ github.run_number }}
+          draft: false
+          prerelease: true
+          fail_on_unmatched_files: false
+          files: |
+            /out/lineage/target/product/gta2slte/lineage-18.1-*.zip
+            /out/lineage/target/product/gta2slte/boot.img
+            /out/lineage/target/product/gta2slte/recovery.img
+            /out/lineage/target/product/gta2slte/system.img
+
+      # ========================================
+      # 14. UPLOAD LOGS
+      # ========================================
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LineageOS-Logs-${{ github.run_number }}
+          path: |
+            /mnt/build-logs/*.log
+            /mnt/build-logs/*.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # ========================================
+      # 15. SAVE CCACHE
+      # ========================================
+
+      - name: Prepare CCache for saving
         if: always()
         run: |
-          export CCACHE_DIR=/var/tmp/ccache
-
+          ccache -M 6G || true
+          ccache -c || true
           ccache -s || true
 
-          sudo swapoff /mnt/lineage-swapfile || true
-          sudo rm -f /mnt/lineage-swapfile
-
-          rm -rf /mnt/lineage /out/lineage || true
-
-          df -h / /mnt
+          df -hT /
 
       - name: Save CCache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: /var/tmp/ccache
-          key: ccache-gta2slte-${{ github.run_id }}
+          key: ccache-gta2slte-6gb-${{ github.run_id }}
