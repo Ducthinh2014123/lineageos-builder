@@ -1,4 +1,3 @@
-
 name: Build LineageOS 18.1 - gta2slte
 
 on:
@@ -25,554 +24,296 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
-
     defaults:
       run:
         shell: bash
-
     env:
       SOURCE_DIR: /mnt/lineage
       OUT_DIR_COMMON_BASE: /out
       CCACHE_DIR: /var/tmp/ccache
       CCACHE_BASEDIR: /mnt/lineage
-      USE_CCACHE: "1"
-      CCACHE_COMPRESS: "1"
-      ALLOW_MISSING_DEPENDENCIES: "false"
+      USE_CCACHE: '1'
+      CCACHE_COMPRESS: '1'
+      ALLOW_MISSING_DEPENDENCIES: 'false'
       BUILD_TARGET: ${{ inputs.build_target }}
       DEBIAN_FRONTEND: noninteractive
 
     steps:
-      # ========================================
-      # 1. MINIMIZE UBUNTU
-      # ========================================
-
-      - name: Minimize Ubuntu runner
+      - name: Minimize GitHub runner and disable swap
         run: |
           set -euo pipefail
-
-          echo "=== INITIAL DISK ==="
-          df -hT /
+          echo '=== Initial disk ==='
+          df -hT / /mnt /var/tmp
           free -h
+          # Disable existing swap and avoid allocating any swapfile.
+          sudo swapoff -a || true
+          sudo systemctl stop docker.service docker.socket containerd.service 2>/dev/null || true
 
-          sudo systemctl stop \
-            docker.service \
-            docker.socket \
-            containerd.service \
-            2>/dev/null || true
-
-          REMOVE_DIRS=(
-            /usr/share/dotnet
-            /usr/local/lib/android
-            /opt/ghc
-            /usr/local/share/powershell
-            /usr/local/share/chromium
-            /usr/local/share/vcpkg
-            /usr/share/miniconda
-            /usr/share/swift
-            /opt/az
-            /var/lib/docker
-            /var/lib/containerd
+          # Purge only explicitly selected optional packages; do not autoremove.
+          packages=(
+            mono-complete mono-devel mono-runtime powershell azure-cli
+            google-cloud-cli google-chrome-stable microsoft-edge-stable
+            firefox chromium-browser maven ant ant-optional sbt
+            podman buildah skopeo terraform packer kubectl helm
           )
-
-          for dir in "${REMOVE_DIRS[@]}"; do
-            if [ -e "$dir" ]; then
-              echo "Removing: $dir"
-              sudo rm -rf -- "$dir"
+          installed=()
+          for pkg in "${packages[@]}"; do
+            if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -qx 'install ok installed'; then
+              installed+=("$pkg")
             fi
           done
+          if ((${#installed[@]})); then
+            sudo apt-get -s purge "${installed[@]}" | tee /tmp/lineage-purge-plan.log
+            if grep -Eq '^Rem (bash|coreutils|git|python3|nodejs|libc6|sudo|apt|curl|gradle|openjdk-[0-9]+-(jdk|jre)|ca-certificates)( |:)' /tmp/lineage-purge-plan.log; then
+              echo '::warning::Unsafe APT purge plan; skipping package purge'
+            else
+              sudo apt-get purge -y "${installed[@]}"
+            fi
+          fi
 
+          # Paths are host-only SDKs. Never touch Android source prebuilts.
+          paths=(
+            /usr/share/dotnet /usr/share/powershell /opt/microsoft/powershell
+            /usr/local/share/powershell /opt/az /usr/local/aws-cli
+            /usr/local/aws-sam-cli /usr/local/google-cloud-sdk
+            /opt/google-cloud-sdk /usr/local/lib/android
+            /usr/share/swift /usr/local/swift /usr/local/julia /opt/ghc
+            /opt/kotlinc /usr/local/kotlinc /usr/share/miniconda
+            /opt/conda /home/linuxbrew /usr/local/share/vcpkg
+            /opt/google/chrome /opt/microsoft/msedge
+            /usr/local/share/chromium /usr/local/share/chromedriver-linux64
+            /usr/local/share/geckodriver /usr/local/share/edge_driver
+            /var/lib/docker /var/lib/containerd /var/lib/containers
+            /usr/local/share/terraform /usr/local/share/pulumi /opt/pulumi
+            /opt/maven /opt/apache-maven /opt/ant /opt/apache-ant /opt/sbt
+            /usr/share/maven /usr/share/ant /usr/share/sbt
+            /opt/hostedtoolcache/Go /opt/hostedtoolcache/go
+            /opt/hostedtoolcache/Ruby /opt/hostedtoolcache/PyPy
+            /opt/hostedtoolcache/CodeQL /opt/hostedtoolcache/Julia
+          )
+          for path in "${paths[@]}"; do
+            if [ -e "$path" ]; then
+              echo "Removing $path"
+              sudo du -sh "$path" 2>/dev/null || true
+              sudo rm -rf -- "$path"
+            fi
+          done
           sudo apt-get clean
-
-          echo "=== DISK AFTER CLEANUP ==="
+          # Do not delete runner, hosted Node/Python/Java, /usr/lib, or /tmp.
+          for cmd in bash git curl python3 node sudo tar gzip df awk; do
+            command -v "$cmd"
+          done
+          echo '=== Disk after cleanup ==='
           df -hT /
-
-      # ========================================
-      # 2. PREPARE DIRECTORIES
-      # ========================================
-
-      - name: Prepare build directories
-        run: |
-          set -euo pipefail
-
-          sudo mkdir -p \
-            /mnt/lineage \
-            /mnt/build-logs \
-            /out/lineage \
-            /var/tmp/ccache
-
-          sudo chown -R \
-            "$USER:$USER" \
-            /mnt/lineage \
-            /mnt/build-logs \
-            /out \
-            /var/tmp/ccache
-
-          echo "=== FILESYSTEMS ==="
-          df -hT / /mnt /out /var/tmp
-
-          echo "=== CPU ==="
-          nproc
-
-          echo "=== MEMORY ==="
           free -h
 
-          echo "=== SWAP ==="
-          swapon --show || true
-
-          echo "No swap file will be created."
-
-      # ========================================
-      # 3. INSTALL BUILD DEPENDENCIES
-      # ========================================
+      - name: Prepare directories
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /mnt/lineage /mnt/build-logs /out/lineage /var/tmp/ccache
+          sudo chown -R "$USER:$USER" /mnt/lineage /mnt/build-logs /out /var/tmp/ccache
+          df -hT / /mnt /out /var/tmp
 
       - name: Install LineageOS dependencies
         run: |
           set -euo pipefail
-
           sudo apt-get update
-
-          sudo apt-get install -y \
-            --no-install-recommends \
-            bc \
-            bison \
-            build-essential \
-            ca-certificates \
-            ccache \
-            curl \
-            file \
-            flex \
-            fontconfig \
-            g++-multilib \
-            gcc-multilib \
-            git \
-            git-lfs \
-            gnupg \
-            gperf \
-            imagemagick \
-            kmod \
-            lib32ncurses5-dev \
-            lib32readline-dev \
-            lib32z1-dev \
-            libdw-dev \
-            libelf-dev \
-            libfreetype6 \
-            libgnutls28-dev \
-            liblz4-tool \
-            libncurses5 \
-            libncurses5-dev \
-            libsdl1.2-dev \
-            libssl-dev \
-            libxml2 \
-            libxml2-utils \
-            lz4 \
-            lzop \
-            openjdk-11-jdk-headless \
-            p7zip-full \
-            pngcrush \
-            protobuf-compiler \
-            python3 \
-            python3-protobuf \
-            python-is-python3 \
-            rsync \
-            schedtool \
-            squashfs-tools \
-            tar \
-            unzip \
-            wget \
-            xxd \
-            xsltproc \
-            xz-utils \
-            zip \
-            zlib1g-dev
-
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ca-certificates ccache curl file flex \
+            fontconfig g++-multilib gcc-multilib git git-lfs gnupg gperf \
+            imagemagick kmod lib32ncurses5-dev lib32readline-dev lib32z1-dev \
+            libdw-dev libelf-dev libfreetype6 libgnutls28-dev liblz4-tool \
+            libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 \
+            libxml2-utils lz4 lzop openjdk-11-jdk-headless p7zip-full \
+            pngcrush protobuf-compiler python3 python3-protobuf \
+            python-is-python3 rsync schedtool squashfs-tools tar unzip \
+            wget xxd xsltproc xz-utils zip zlib1g-dev
           sudo apt-get clean
-
-          echo "=== TOOL VERSIONS ==="
+          git lfs install
           java -version
           python3 --version
-          git --version
-          ccache --version | head -1
-
-          echo "=== DISK ==="
+          if command -v gradle >/dev/null 2>&1; then
+            echo 'Host Gradle preserved:'
+            command -v gradle
+          fi
           df -hT /
-
-      # ========================================
-      # 4. INSTALL REPO TOOL
-      # ========================================
 
       - name: Install Android repo tool
         run: |
           set -euo pipefail
-
           mkdir -p "$HOME/bin"
-
           curl -fL --retry 3 \
             https://storage.googleapis.com/git-repo-downloads/repo \
             -o "$HOME/bin/repo"
-
           chmod +x "$HOME/bin/repo"
-
           echo "$HOME/bin" >> "$GITHUB_PATH"
-
           "$HOME/bin/repo" version
-
-      # ========================================
-      # 5. RESTORE CCACHE
-      # ========================================
 
       - name: Restore CCache
         uses: actions/cache/restore@v4
         with:
           path: /var/tmp/ccache
-          key: ccache-gta2slte-6gb-${{ github.run_id }}
+          key: ccache-gta2slte-6gb-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             ccache-gta2slte-6gb-
 
-      - name: Configure CCache 6GB
+      - name: Configure CCache
         run: |
           set -euo pipefail
-
           ccache -M 6G
           ccache -c
           ccache -z
           ccache -s
-
-          echo "=== CCACHE USAGE ==="
-          du -sh "$CCACHE_DIR" || true
-
           df -hT /
-
-      # ========================================
-      # 6. INITIALIZE LINEAGEOS
-      # ========================================
 
       - name: Initialize LineageOS source
         working-directory: /mnt/lineage
         run: |
           set -euo pipefail
-
-          git config --global \
-            user.name "LineageOS Builder"
-
-          git config --global \
-            user.email "builder@users.noreply.github.com"
-
+          git config --global user.name 'LineageOS Builder'
+          git config --global user.email 'builder@users.noreply.github.com'
           git config --global color.ui false
-
-          repo init \
-            -u https://github.com/LineageOS/android.git \
-            -b lineage-18.1 \
-            --depth=1 \
-            --git-lfs
-
+          repo init -u https://github.com/LineageOS/android.git \
+            -b lineage-18.1 --depth=1 --git-lfs
           mkdir -p .repo/local_manifests
-
           cat > .repo/local_manifests/gta2slte.xml <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <manifest>
-            <project
-              name="Ducthinh2014123/android_device_samsung_gta2slte"
-              path="device/samsung/gta2slte"
-              remote="github"
-              revision="lineage-18.1" />
-
-            <project
-              name="Ducthinh2014123/proprietary_vendor_samsung_gta2slte"
-              path="vendor/samsung/gta2slte"
-              remote="github"
-              revision="lineage-18.1" />
-
-            <project
-              name="Ducthinh2014123/android_kernel_samsung_msm8937"
-              path="kernel/samsung/msm8937"
-              remote="github"
-              revision="lineage-18.1" />
-
-            <project
-              name="LineageOS/android_hardware_samsung"
-              path="hardware/samsung"
-              remote="github"
-              revision="lineage-18.1" />
-
-            <project
-              name="LineageOS/android_hardware_sony_timekeep"
-              path="hardware/sony/timekeep"
-              remote="github"
-              revision="lineage-18.1" />
+            <remote name="github-local" fetch="https://github.com/" />
+            <project name="Ducthinh2014123/android_device_samsung_gta2slte"
+                     path="device/samsung/gta2slte"
+                     remote="github-local" revision="lineage-18.1" />
+            <project name="Ducthinh2014123/proprietary_vendor_samsung_gta2slte"
+                     path="vendor/samsung/gta2slte"
+                     remote="github-local" revision="lineage-18.1" />
+            <project name="Ducthinh2014123/android_kernel_samsung_msm8937"
+                     path="kernel/samsung/msm8937"
+                     remote="github-local" revision="lineage-18.1" />
+            <project name="LineageOS/android_hardware_samsung"
+                     path="hardware/samsung"
+                     remote="github-local" revision="lineage-18.1" />
+            <project name="LineageOS/android_hardware_sony_timekeep"
+                     path="hardware/sony/timekeep"
+                     remote="github-local" revision="lineage-18.1" />
           </manifest>
           EOF
+          repo manifest -o /mnt/build-logs/manifest.xml
 
-          repo manifest \
-            -o /mnt/build-logs/manifest.xml
-
-      # ========================================
-      # 7. SYNC SOURCE
-      # ========================================
-
-      - name: Sync LineageOS source
+      - name: Sync LineageOS with disk watchdog
         working-directory: /mnt/lineage
         run: |
           set -euo pipefail
-
-          echo "=== SYNC START ==="
-
-          setsid bash -c '
-            repo sync \
-              -c \
-              -j2 \
-              --no-tags \
-              --no-clone-bundle \
-              --optimized-fetch \
-              --prune \
-              --fail-fast
-          ' > /mnt/build-logs/repo-sync.log 2>&1 &
-
-          SYNC_PID=$!
-
-          (
-            while kill -0 "$SYNC_PID" 2>/dev/null; do
-              sleep 5
-
-              FREE_KB=$(df -Pk / | awk 'NR==2 {print $4}')
-
-              echo "[SYNC DISK] ${FREE_KB} KB free"
-
-              if [ "$FREE_KB" -lt 716800 ]; then
-                echo "::error::Less than 700 MiB free"
-                touch /mnt/build-logs/sync-disk-critical
-
-                kill -TERM -- "-$SYNC_PID" \
-                  2>/dev/null || true
-
-                sleep 3
-
-                kill -KILL -- "-$SYNC_PID" \
-                  2>/dev/null || true
-
-                break
-              fi
-            done
-          ) &
-
-          WATCH_PID=$!
-
-          set +e
-          wait "$SYNC_PID"
-          STATUS=$?
-          set -e
-
-          kill "$WATCH_PID" 2>/dev/null || true
-          wait "$WATCH_PID" 2>/dev/null || true
-
-          if [ -f /mnt/build-logs/sync-disk-critical ]; then
-            echo "::error::Sync stopped due to low disk"
-            tail -n 100 /mnt/build-logs/repo-sync.log
+          if [ "$(df -Pk / | awk 'NR==2 {print $4}')" -lt 716800 ]; then
+            echo '::error::Less than 700 MiB free before sync'
             exit 1
           fi
-
-          if [ "$STATUS" -ne 0 ]; then
-            echo "::error::Repo sync failed"
-            tail -n 200 /mnt/build-logs/repo-sync.log
-            exit "$STATUS"
-          fi
-
-          echo "=== SYNC SUCCESS ==="
-          df -hT /
-
-      # ========================================
-      # 8. VERIFY SOURCE
-      # ========================================
+          setsid bash -c 'exec repo sync -c -j2 --no-tags --no-clone-bundle --optimized-fetch --prune --fail-fast' \
+            > /mnt/build-logs/repo-sync.log 2>&1 &
+          pid=$!
+          (
+            while kill -0 "$pid" 2>/dev/null; do
+              free_kb=$(df -Pk / | awk 'NR==2 {print $4}')
+              if [ "$free_kb" -lt 716800 ]; then
+                echo '::error::Disk below 700 MiB during sync'
+                touch /mnt/build-logs/sync-disk-critical
+                kill -TERM -- "-$pid" 2>/dev/null || true
+                sleep 3
+                kill -KILL -- "-$pid" 2>/dev/null || true
+                break
+              fi
+              sleep 5
+            done
+          ) &
+          watcher=$!
+          set +e
+          wait "$pid"
+          status=$?
+          set -e
+          kill "$watcher" 2>/dev/null || true
+          wait "$watcher" 2>/dev/null || true
+          tail -n 80 /mnt/build-logs/repo-sync.log || true
+          if [ -f /mnt/build-logs/sync-disk-critical ]; then exit 1; fi
+          exit "$status"
 
       - name: Verify source
         working-directory: /mnt/lineage
         run: |
           set -euo pipefail
-
-          REQUIRED=(
-            build/envsetup.sh
-            build/soong
-            device/samsung/gta2slte
-            vendor/samsung/gta2slte
-            kernel/samsung/msm8937
-            tools/metalava
-          )
-
-          for item in "${REQUIRED[@]}"; do
-            if [ ! -e "$item" ]; then
-              echo "::error::Missing source: $item"
-              exit 1
-            fi
+          for path in \
+            build/envsetup.sh build/soong \
+            device/samsung/gta2slte vendor/samsung/gta2slte \
+            kernel/samsung/msm8937 tools/metalava; do
+            test -e "$path" || { echo "::error::Missing $path"; exit 1; }
           done
-
-          echo "=== SOURCE VERIFIED ==="
-
-          df -hT /
-
-      # ========================================
-      # 9. PRE-BUILD CHECK
-      # ========================================
-
-      - name: Check disk and CPU before build
-        run: |
-          set -euo pipefail
-
-          echo "=== CPU ==="
-          nproc
-
-          echo "=== RAM ==="
-          free -h
-
-          echo "=== DISK ==="
           df -hT / /mnt /out
+          du -sh /mnt/lineage /var/tmp/ccache || true
 
-          echo "=== SOURCE / CCACHE ==="
-          du -sh \
-            /mnt/lineage \
-            /var/tmp/ccache \
-            2>/dev/null || true
-
-          FREE_KB=$(df -Pk / | awk 'NR==2 {print $4}')
-
-          if [ "$FREE_KB" -lt 716800 ]; then
-            echo "::error::Less than 700 MiB free"
-            exit 1
-          fi
-
-      # ========================================
-      # 10. BUILD WITH FULL NPROC
-      # ========================================
-
-      - name: Build LineageOS with full CPU
+      - name: Build LineageOS with full nproc and disk watchdog
         working-directory: /mnt/lineage
         run: |
           set -euo pipefail
-
-          JOBS=$(nproc)
-
-          echo "=== BUILD TARGET ==="
-          echo "$BUILD_TARGET"
-
-          echo "=== BUILD JOBS ==="
-          echo "$JOBS"
-
-          echo "=== MEMORY ==="
+          jobs=$(nproc)
+          echo "Building $BUILD_TARGET with -j$jobs"
           free -h
-
-          ulimit -n 65535 || true
-
-          export JOBS
-
-          setsid timeout 315m bash -c '
-            set -euo pipefail
-
-            source build/envsetup.sh
-
-            lunch lineage_gta2slte-userdebug
-
-            make -j"$JOBS" "$BUILD_TARGET"
-          ' > /mnt/build-logs/build.log 2>&1 &
-
-          BUILD_PID=$!
-
-          (
-            while kill -0 "$BUILD_PID" 2>/dev/null; do
-              sleep 5
-
-              FREE_KB=$(df -Pk / | awk 'NR==2 {print $4}')
-
-              echo "[BUILD DISK] ${FREE_KB} KB free"
-
-              if [ "$FREE_KB" -lt 716800 ]; then
-                echo "::error::Critical disk: 700 MiB"
-                touch /mnt/build-logs/build-disk-critical
-
-                kill -TERM -- "-$BUILD_PID" \
-                  2>/dev/null || true
-
-                sleep 3
-
-                kill -KILL -- "-$BUILD_PID" \
-                  2>/dev/null || true
-
-                break
-              fi
-            done
-          ) &
-
-          WATCH_PID=$!
-
-          set +e
-          wait "$BUILD_PID"
-          STATUS=$?
-          set -e
-
-          kill "$WATCH_PID" 2>/dev/null || true
-          wait "$WATCH_PID" 2>/dev/null || true
-
-          echo "=== BUILD EXIT CODE ==="
-          echo "$STATUS"
-
-          echo "=== LAST 150 LOG LINES ==="
-          tail -n 150 /mnt/build-logs/build.log || true
-
-          echo "=== CCACHE ==="
-          ccache -s || true
-
-          echo "=== DISK ==="
-          df -hT /
-
-          if [ -f /mnt/build-logs/build-disk-critical ]; then
-            echo "::error::Build terminated: low disk"
+          if [ "$(df -Pk / | awk 'NR==2 {print $4}')" -lt 716800 ]; then
+            echo '::error::Less than 700 MiB free before build'
             exit 1
           fi
+          ulimit -n 65535 || true
+          export JOBS="$jobs"
+          setsid timeout --signal=TERM --kill-after=15s 315m bash -c '
+            set -euo pipefail
+            source build/envsetup.sh
+            lunch lineage_gta2slte-userdebug
+            make -j"$JOBS" "$BUILD_TARGET"
+          ' > /mnt/build-logs/build.log 2>&1 &
+          pid=$!
+          (
+            while kill -0 "$pid" 2>/dev/null; do
+              free_kb=$(df -Pk / | awk 'NR==2 {print $4}')
+              echo "Free disk: $((free_kb / 1024)) MiB"
+              if [ "$free_kb" -lt 716800 ]; then
+                echo '::error::Disk below 700 MiB during build'
+                touch /mnt/build-logs/build-disk-critical
+                kill -TERM -- "-$pid" 2>/dev/null || true
+                sleep 3
+                kill -KILL -- "-$pid" 2>/dev/null || true
+                break
+              fi
+              sleep 5
+            done
+          ) &
+          watcher=$!
+          set +e
+          wait "$pid"
+          status=$?
+          set -e
+          kill "$watcher" 2>/dev/null || true
+          wait "$watcher" 2>/dev/null || true
+          tail -n 150 /mnt/build-logs/build.log || true
+          ccache -s || true
+          df -hT /
+          if [ -f /mnt/build-logs/build-disk-critical ]; then exit 1; fi
+          exit "$status"
 
-          if [ "$STATUS" -eq 124 ]; then
-            echo "::error::Build timeout"
-            exit 124
-          fi
-
-          if [ "$STATUS" -ne 0 ]; then
-            echo "::error::LineageOS build failed"
-            exit "$STATUS"
-          fi
-
-          echo "=== BUILD SUCCESS ==="
-
-      # ========================================
-      # 11. VERIFY OUTPUT
-      # ========================================
-
-      - name: Verify build output
+      - name: Verify output
         if: success()
         run: |
           set -euo pipefail
-
-          PRODUCT_DIR=/out/lineage/target/product/gta2slte
-
-          echo "=== OUTPUT ==="
-          ls -lh "$PRODUCT_DIR"
-
+          product_dir=/out/lineage/target/product/gta2slte
+          test -d "$product_dir"
+          ls -lh "$product_dir"
           case "$BUILD_TARGET" in
             bacon)
-              compgen -G "$PRODUCT_DIR/lineage-18.1-*.zip" \
-                > /dev/null || {
-                  echo "::error::ROM ZIP missing"
-                  exit 1
-                }
+              compgen -G "$product_dir/lineage-18.1-*.zip" >/dev/null
               ;;
             systemimage)
-              test -f "$PRODUCT_DIR/system.img"
+              test -f "$product_dir/system.img"
               ;;
             bootimage)
-              test -f "$PRODUCT_DIR/boot.img"
+              test -f "$product_dir/boot.img"
               ;;
           esac
-
-          df -hT /
-
-      # ========================================
-      # 12. UPLOAD ARTIFACTS
-      # ========================================
 
       - name: Upload build artifacts
         if: success()
@@ -588,17 +329,12 @@ jobs:
           retention-days: 7
           compression-level: 0
 
-      # ========================================
-      # 13. GITHUB RELEASE
-      # ========================================
-
       - name: Publish GitHub Release
         if: success()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: lineage-18.1-gta2slte-${{ github.run_number }}
           name: LineageOS 18.1 gta2slte Build ${{ github.run_number }}
-          draft: false
           prerelease: true
           fail_on_unmatched_files: false
           files: |
@@ -606,10 +342,6 @@ jobs:
             /out/lineage/target/product/gta2slte/boot.img
             /out/lineage/target/product/gta2slte/recovery.img
             /out/lineage/target/product/gta2slte/system.img
-
-      # ========================================
-      # 14. UPLOAD LOGS
-      # ========================================
 
       - name: Upload build logs
         if: always()
@@ -622,17 +354,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # ========================================
-      # 15. SAVE CCACHE
-      # ========================================
-
       - name: Prepare CCache for saving
         if: always()
         run: |
           ccache -M 6G || true
           ccache -c || true
           ccache -s || true
-
           df -hT /
 
       - name: Save CCache
@@ -640,4 +367,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /var/tmp/ccache
-          key: ccache-gta2slte-6gb-${{ github.run_id }}
+          key: ccache-gta2slte-6gb-${{ github.run_id }}-${{ github.run_attempt }}
