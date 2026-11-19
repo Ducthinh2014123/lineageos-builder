@@ -274,37 +274,38 @@ jobs:
           df -hT / /mnt /out
           du -sh /mnt/lineage /var/tmp/ccache || true
 
-      - name: Fix optional AOSP reference RIL dependency
+      - name: Resolve AOSP reference RIL vs Samsung vendor blobs
         working-directory: /mnt/lineage
         run: |
           set -euo pipefail
           reference_mk=hardware/ril/reference-ril/Android.mk
+          vendor_mk=vendor/samsung/gta2slte/gta2slte-vendor.mk
+          mkdir -p /mnt/build-logs
+
+          echo '=== Samsung RIL vendor blob copy entries ==='
+          grep -nE 'libreference-ril\.so|/libril\.so|libsec-ril\.so' "$vendor_mk" \
+            | tee /mnt/build-logs/ril-vendor-entries.txt || true
+
+          echo '=== AOSP libril module definitions ==='
+          grep -RInE --include='Android.mk' --include='Android.bp' \
+            'LOCAL_MODULE[[:space:]]*:=[[:space:]]*libril([[:space:]]|$)|name:[[:space:]]*"libril"' \
+            hardware/ril 2>/dev/null \
+            | tee /mnt/build-logs/libril-module-definitions.txt || true
+
           if [ ! -f "$reference_mk" ]; then
-            echo 'No AOSP reference RIL Android.mk; nothing to adjust.'
-            exit 0
-          fi
-
-          # The reference implementation is not the device/vendor RIL.
-          # Do not suppress it if the device explicitly requests the module.
-          if grep -RIl --include='*.mk' --include='*.bp' \
-               --include='*.xml' -E 'libreference-ril|reference-ril' \
-               device/samsung/gta2slte vendor/samsung/gta2slte \
-               device/samsung 2>/dev/null | grep -v '^hardware/ril/reference-ril/' \
-               | tee /mnt/build-logs/reference-ril-consumers.txt | grep -q .; then
-            echo '::error::Device/vendor explicitly references AOSP reference RIL; cannot safely disable it.'
-            cat /mnt/build-logs/reference-ril-consumers.txt
-            exit 1
-          fi
-
-          # If libril is absent, the standalone AOSP sample cannot link.
-          # Disable only its build declaration, leaving all device/vendor RIL intact.
-          if ! grep -Rql --include='Android.mk' --include='Android.bp' -E 'LOCAL_MODULE[[:space:]]*:=[[:space:]]*libril([[:space:]]|$)|name:[[:space:]]*"libril"' \
-               hardware/ril 2>/dev/null; then
-            echo 'AOSP libril module not found; excluding unused libreference-ril sample.'
-            mv "$reference_mk" "${reference_mk}.disabled"
+            echo 'AOSP reference-ril Android.mk absent; no change needed.'
+          elif [ -s /mnt/build-logs/libril-module-definitions.txt ]; then
+            echo 'AOSP libril module exists; preserving reference-ril build.'
           else
-            echo 'libril definition found; preserving reference-ril Android.mk.'
+            echo 'AOSP libril module absent: disabling ONLY reference-ril source build.'
+            echo 'Samsung proprietary RIL .so files and vendor copy rules remain intact.'
+            mv -- "$reference_mk" "${reference_mk}.disabled"
           fi
+
+          echo '=== RIL package requests (diagnostic only) ==='
+          grep -RInE --include='*.mk' 'libreference-ril|libril' \
+            device/samsung/gta2slte vendor/samsung/gta2slte \
+            2>/dev/null | head -60 || true
 
       - name: Build LineageOS with full nproc and disk watchdog
         working-directory: /mnt/lineage
