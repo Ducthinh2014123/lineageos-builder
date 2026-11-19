@@ -7,7 +7,7 @@ on:
       build_target:
         description: "Build target"
         required: true
-        default: "bacon"
+        default: bacon
         type: choice
         options:
           - bacon
@@ -30,21 +30,21 @@ jobs:
       SOURCE_DIR: /mnt/lineage
       OUT_DIR: /out/lineage
       CCACHE_DIR: /var/tmp/ccache
+      CCACHE_BASEDIR: /mnt/lineage
+      CCACHE_EXEC: /usr/bin/ccache
       USE_CCACHE: "1"
       CCACHE_COMPRESS: "1"
-      CCACHE_EXEC: /usr/bin/ccache
-      CCACHE_BASEDIR: /mnt/lineage
       ALLOW_MISSING_DEPENDENCIES: "false"
       WITH_DEXPREOPT_BOOT_IMG_AND_SYSTEM_SERVER_ONLY: "true"
       GOMAXPROCS: "2"
       LC_ALL: C
 
     steps:
-      - name: Free disk space
+      - name: Free disk space and prepare directories
         run: |
           set -euo pipefail
 
-          echo "=== Before cleanup ==="
+          echo "=== Initial disk space ==="
           df -h / /mnt
 
           sudo swapoff -a || true
@@ -77,19 +77,21 @@ jobs:
 
           sudo mkdir -p \
             /mnt/lineage \
+            /mnt/build-logs \
             /out/lineage \
             /var/tmp/ccache
 
           sudo chown -R \
             "$USER:$USER" \
             /mnt/lineage \
+            /mnt/build-logs \
             /out \
             /var/tmp/ccache
 
-          echo "=== After cleanup ==="
+          echo "=== Disk after cleanup ==="
           df -h / /mnt
 
-      - name: Configure swap
+      - name: Configure 2GB swap
         run: |
           set -euo pipefail
 
@@ -201,37 +203,30 @@ jobs:
           cat > .repo/local_manifests/gta2slte.xml <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <manifest>
-            <project
-              name="Ducthinh2014123/android_device_samsung_gta2slte"
-              path="device/samsung/gta2slte"
-              remote="github"
-              revision="lineage-18.1" />
-            <project
-              name="Ducthinh2014123/proprietary_vendor_samsung_gta2slte"
-              path="vendor/samsung/gta2slte"
-              remote="github"
-              revision="lineage-18.1" />
-            <project
-              name="Ducthinh2014123/android_kernel_samsung_msm8937"
-              path="kernel/samsung/msm8937"
-              remote="github"
-              revision="lineage-18.1" />
-            <project
-              name="LineageOS/android_hardware_samsung"
-              path="hardware/samsung"
-              remote="github"
-              revision="lineage-18.1" />
-            <project
-              name="LineageOS/android_hardware_sony_timekeep"
-              path="hardware/sony/timekeep"
-              remote="github"
-              revision="lineage-18.1" />
+            <project name="Ducthinh2014123/android_device_samsung_gta2slte"
+                     path="device/samsung/gta2slte"
+                     remote="github"
+                     revision="lineage-18.1" />
+            <project name="Ducthinh2014123/proprietary_vendor_samsung_gta2slte"
+                     path="vendor/samsung/gta2slte"
+                     remote="github"
+                     revision="lineage-18.1" />
+            <project name="Ducthinh2014123/android_kernel_samsung_msm8937"
+                     path="kernel/samsung/msm8937"
+                     remote="github"
+                     revision="lineage-18.1" />
+            <project name="LineageOS/android_hardware_samsung"
+                     path="hardware/samsung"
+                     remote="github"
+                     revision="lineage-18.1" />
+            <project name="LineageOS/android_hardware_sony_timekeep"
+                     path="hardware/sony/timekeep"
+                     remote="github"
+                     revision="lineage-18.1" />
           </manifest>
           EOF
 
-          echo "Source initialized."
-
-      - name: Configure manifest exclusions
+      - name: Configure safe manifest exclusions
         working-directory: /mnt/lineage
         run: |
           set -euo pipefail
@@ -262,31 +257,26 @@ jobs:
           ):
               try:
                   root = ET.parse(filename).getroot()
-
                   for project in root.findall(".//project"):
                       path = project.get("path", "")
                       name = project.get("name", "")
-
                       if name and path.startswith(skip_paths):
                           names.add(name)
-
               except ET.ParseError:
                   continue
 
-          output = ".repo/local_manifests/remove.xml"
-
-          with open(output, "w") as file:
-              file.write("<manifest>\n")
-
+          with open(
+              ".repo/local_manifests/remove.xml", "w"
+          ) as output:
+              output.write("<manifest>\n")
               for name in sorted(names):
-                  file.write(
+                  output.write(
                       f'  <remove-project name="{name}" />\n'
                   )
-
-              file.write("</manifest>\n")
+              output.write("</manifest>\n")
 
           print(f"Excluded projects: {len(names)}")
-          print("Gradle plugin prebuilts preserved.")
+          print("Gradle plugin prebuilts: PRESERVED")
           PY
 
       - name: Sync LineageOS source
@@ -295,6 +285,8 @@ jobs:
           set -euo pipefail
 
           echo "=== Syncing source ==="
+
+          mkdir -p /mnt/build-logs
 
           if ! repo sync \
             -c \
@@ -305,15 +297,14 @@ jobs:
             --optimized-fetch \
             --prune \
             --fail-fast \
-            > /mnt/repo-sync.log 2>&1; then
+            > /mnt/build-logs/repo-sync.log 2>&1; then
 
             echo "::error::Repository sync failed"
-            tail -n 200 /mnt/repo-sync.log
+            tail -n 200 /mnt/build-logs/repo-sync.log
             exit 1
           fi
 
           echo "=== Sync completed ==="
-
           df -h / /mnt
 
       - name: Validate critical dependencies
@@ -321,7 +312,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "=== Clang / RenderScript ==="
+          echo "=== RenderScript LLVM ==="
 
           LLVM_AS=prebuilts/clang/host/linux-x86/clang-3289846/bin/llvm-as
 
@@ -330,41 +321,30 @@ jobs:
             exit 1
           fi
 
-          echo "RenderScript LLVM: OK"
-
           echo "=== Glide Maven dependency ==="
 
           GLIDE_JAR=prebuilts/maven_repo/bumptech/com/github/bumptech/glide/glide/SNAPSHOT/glide-SNAPSHOT.jar
 
           if [ ! -f "$GLIDE_JAR" ]; then
-            echo "::error::Missing Glide Maven dependency"
+            echo "::error::Missing Glide dependency"
             exit 1
           fi
-
-          echo "Glide Maven: OK"
 
           echo "=== Gradle plugin prebuilts ==="
 
           if [ ! -d prebuilts/gradle-plugin ]; then
-            echo "::error::Missing prebuilts/gradle-plugin"
+            echo "::error::Missing Gradle plugin prebuilts"
             exit 1
           fi
-
-          echo "Gradle plugin prebuilts: OK"
 
           echo "=== Metalava ==="
-
-          if [ ! -d tools/metalava ]; then
-            echo "::error::Missing tools/metalava"
-            exit 1
-          fi
 
           if [ ! -f tools/metalava/Android.bp ]; then
             echo "::error::Missing Metalava Android.bp"
             exit 1
           fi
 
-          echo "=== Metalava dependency references ==="
+          echo "=== Metalava Gradle dependency ==="
 
           grep -R -n -m 5 \
             "metalava-gradle-plugin-deps" \
@@ -372,7 +352,7 @@ jobs:
             prebuilts/gradle-plugin \
             | head -30 || true
 
-          echo "Critical dependency checks completed."
+          echo "Critical dependency validation completed."
 
       - name: Configure CCache
         run: |
@@ -391,15 +371,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "=== Build configuration ==="
-          echo "Target: $BUILD_TARGET"
+          echo "=== Build target: $BUILD_TARGET ==="
 
           ulimit -n 65535 || true
 
           rm -rf hardware/ril/reference-ril
-
-          echo "=== Disk before build ==="
-          df -h / /mnt
 
           mkdir -p /mnt/build-logs
 
@@ -419,10 +395,6 @@ jobs:
               if [ "$MNT_FREE" -lt 5242880 ]; then
                 echo "::warning::Mount disk below 5 GiB"
               fi
-
-              if [ "$ROOT_FREE" -lt 2097152 ]; then
-                echo "::error::Root disk critically low"
-              fi
             done
           ) &
 
@@ -439,11 +411,8 @@ jobs:
 
           timeout 315m bash -c '
             set -o pipefail
-
             source build/envsetup.sh
-
             lunch lineage_gta2slte-userdebug
-
             make -j2 "$BUILD_TARGET"
           ' 2>&1 | tee /mnt/build-logs/build.log
 
@@ -451,8 +420,7 @@ jobs:
 
           set -e
 
-          echo "=== Build finished ==="
-          echo "Exit code: $BUILD_STATUS"
+          echo "=== Build exit code: $BUILD_STATUS ==="
 
           ccache -s || true
           df -h / /mnt
@@ -464,10 +432,7 @@ jobs:
 
           if [ "$BUILD_STATUS" -ne 0 ]; then
             echo "::error::LineageOS build failed"
-
-            echo "=== Last 150 log lines ==="
             tail -n 150 /mnt/build-logs/build.log
-
             exit "$BUILD_STATUS"
           fi
 
@@ -480,7 +445,6 @@ jobs:
           name: LineageOS-Build-Logs-${{ github.run_number }}
           path: |
             /mnt/build-logs/*.log
-            /mnt/repo-sync.log
           retention-days: 7
           if-no-files-found: ignore
 
@@ -511,18 +475,17 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-      - name: Cleanup build source
+      - name: Cleanup source and output
         if: always()
         run: |
-          echo "=== CCache statistics ==="
-
           export CCACHE_DIR=/var/tmp/ccache
+
           ccache -s || true
 
-          echo "=== Cleanup ==="
+          sudo swapoff /mnt/lineage-swapfile || true
+          sudo rm -f /mnt/lineage-swapfile
 
           rm -rf /mnt/lineage /out/lineage || true
-          rm -f /mnt/lineage-swapfile || true
 
           df -h / /mnt
 
